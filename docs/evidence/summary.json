@@ -1,0 +1,32 @@
+{
+  "collectedAt": "2026-11-24T19:59:43.963Z",
+  "node": "v24.11.1",
+  "platform": "win32 10.0.26300",
+  "fixtures": 30,
+  "tp": 20,
+  "fp": 0,
+  "tn": 10,
+  "fn": 0,
+  "indeterminate": 0,
+  "missedFailures": 0,
+  "precision": 1,
+  "recall": 1,
+  "falsePositiveRate": 0,
+  "isolation": {
+    "correct": 20,
+    "total": 20
+  },
+  "meanExecutionMs": 4769,
+  "generated": {
+    "failuresReproduced": 20,
+    "total": 20,
+    "repairedPassed": 2,
+    "repairSpecs": 2,
+    "originalExit": 1,
+    "repairedExit": 0
+  },
+  "repair": {
+    "verified": 2,
+    "eligible": 2
+  }
+}

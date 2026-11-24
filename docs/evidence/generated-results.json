@@ -1,0 +1,160 @@
+{
+    "original":  [
+                     {
+                         "file":  "bench-36792d58-empty-body.spec.ts",
+                         "test":  "Cart to checkout handles Empty product response",
+                         "status":  "failed",
+                         "durationMs":  5856,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-empty-catalog.spec.ts",
+                         "test":  "Cart to checkout handles Empty catalog",
+                         "status":  "failed",
+                         "durationMs":  5501,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-400.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 400",
+                         "status":  "failed",
+                         "durationMs":  5762,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-401.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 401",
+                         "status":  "failed",
+                         "durationMs":  5973,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-403.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 403",
+                         "status":  "failed",
+                         "durationMs":  5906,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-404.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 404",
+                         "status":  "failed",
+                         "durationMs":  5911,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-429.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 429",
+                         "status":  "failed",
+                         "durationMs":  5646,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-500.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 500",
+                         "status":  "failed",
+                         "durationMs":  5720,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-http-503.spec.ts",
+                         "test":  "Cart to checkout handles Product returns HTTP 503",
+                         "status":  "failed",
+                         "durationMs":  5839,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-large-price.spec.ts",
+                         "test":  "Cart to checkout handles Unexpected seeded price",
+                         "status":  "failed",
+                         "durationMs":  998,
+                         "message":  "Error: Displayed unit price is positive: measured 192989, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-malformed.spec.ts",
+                         "test":  "Cart to checkout handles Malformed product JSON",
+                         "status":  "failed",
+                         "durationMs":  5707,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-missing-price.spec.ts",
+                         "test":  "Cart to checkout handles Missing price",
+                         "status":  "failed",
+                         "durationMs":  1003,
+                         "message":  "Error: Displayed unit price is positive: measured 0, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-negative-price.spec.ts",
+                         "test":  "Cart to checkout handles Negative price",
+                         "status":  "failed",
+                         "durationMs":  979,
+                         "message":  "Error: Displayed unit price is positive: measured -4800, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-nested-product.spec.ts",
+                         "test":  "Cart to checkout handles Nested catalog contract changes",
+                         "status":  "failed",
+                         "durationMs":  5603,
+                         "message":  "Error: \u001b[2mexpect(\u001b[22m\u001b[31mpage\u001b[39m\u001b[2m).\u001b[22mtoHaveURL\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed"
+                     },
+                     {
+                         "file":  "bench-36792d58-null-price.spec.ts",
+                         "test":  "Cart to checkout handles Null price",
+                         "status":  "failed",
+                         "durationMs":  1027,
+                         "message":  "Error: Displayed unit price is positive: measured 0, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-price-type.spec.ts",
+                         "test":  "Cart to checkout handles Incorrect price type",
+                         "status":  "failed",
+                         "durationMs":  920,
+                         "message":  "Error: Displayed unit price is positive: measured 0, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-repair-combined-drift.spec.ts",
+                         "test":  "Cart to checkout handles Price rename with benign mutations",
+                         "status":  "failed",
+                         "durationMs":  925,
+                         "message":  "Error: Displayed unit price is positive: measured 0, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-repair-rename-price.spec.ts",
+                         "test":  "Cart to checkout handles Price renamed",
+                         "status":  "failed",
+                         "durationMs":  954,
+                         "message":  "Error: Displayed unit price is positive: measured 0, expected between 1 and 100000"
+                     },
+                     {
+                         "file":  "bench-36792d58-slow-product.spec.ts",
+                         "test":  "Cart to checkout handles Response exceeds client deadline",
+                         "status":  "failed",
+                         "durationMs":  5758,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     },
+                     {
+                         "file":  "bench-36792d58-timeout.spec.ts",
+                         "test":  "Cart to checkout handles Product transport timeout",
+                         "status":  "failed",
+                         "durationMs":  5775,
+                         "message":  "TimeoutError: locator.click: Timeout 5000ms exceeded."
+                     }
+                 ],
+    "repaired":  [
+                     {
+                         "file":  "bench-36792d58-repair-combined-drift.spec.ts",
+                         "test":  "Cart to checkout handles Price rename with benign mutations",
+                         "status":  "passed",
+                         "durationMs":  1557,
+                         "message":  ""
+                     },
+                     {
+                         "file":  "bench-36792d58-repair-rename-price.spec.ts",
+                         "test":  "Cart to checkout handles Price renamed",
+                         "status":  "passed",
+                         "durationMs":  1162,
+                         "message":  ""
+                     }
+                 ]
+}

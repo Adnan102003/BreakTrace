@@ -1,6 +1,6 @@
 import type { Run } from '../shared/contracts';
 
-export function generateRegression(run: Run) {
+export function generateRegression(run: Run, sourceRoot = '../..') {
   const indices =
     run.isolation?.status === 'verified'
       ? run.isolation.indices
@@ -8,9 +8,12 @@ export function generateRegression(run: Run) {
   const data = JSON.stringify(run.scenario, null, 2);
   const steps = run.workflow.steps.map((step, index) => {
     if (step.action === 'rules') {
+      const definition = JSON.stringify(step, null, 2).replaceAll('\n', '\n  ');
       return (
-        `  const rules${index + 1} = await checkStep(page, ${JSON.stringify(step)});\n` +
-        `  for (const rule of rules${index + 1}) expect(rule.passed, \`\${rule.name}: measured \${rule.actual}, expected \${rule.expected}\`).toBe(true);`
+        `  const rules${index + 1} = await checkStep(page, ${definition});\n` +
+        `  for (const rule of rules${index + 1}) {\n` +
+        `    const message = \`\${rule.name}: measured \${rule.actual}, expected \${rule.expected}\`;\n` +
+        `    expect(rule.passed, message).toBe(true);\n  }`
       );
     }
     if (step.action === 'text')
@@ -26,10 +29,10 @@ export function generateRegression(run: Run) {
     `// Save under tests/generated/ and run: npm run test:generated\n` +
     `// BREAKTRACE_RESILIENT=1 selects the reviewed demo fix. Seed and indices preserve the experiment.\n` +
     `import { expect, test } from '@playwright/test';\n` +
-    `import { startDemo } from '../../apps/demo/server';\n` +
-    `import { installInterception } from '../../packages/mutation-engine';\n` +
-    `import { checkStep } from '../../apps/api/browser';\n` +
-    `import type { Scenario } from '../../packages/shared/contracts';\n\n` +
+    `import { startDemo } from '${sourceRoot}/apps/demo/server';\n` +
+    `import { installInterception } from '${sourceRoot}/packages/mutation-engine';\n` +
+    `import { checkStep } from '${sourceRoot}/apps/api/browser';\n` +
+    `import type { Scenario } from '${sourceRoot}/packages/shared/contracts';\n\n` +
     `const scenario: Scenario = ${data};\nconst activeMutations = ${JSON.stringify(indices)};\n\n` +
     `test(${JSON.stringify(`${run.workflow.name} handles ${run.scenario.name}`)}, async ({ page, context }) => {\n` +
     `  const resilient = process.env.BREAKTRACE_RESILIENT === undefined\n` +

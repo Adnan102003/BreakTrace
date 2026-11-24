@@ -12,7 +12,7 @@ import { cases } from './benchmark-cases';
 
 const id = randomUUID().slice(0, 8);
 const target = resolve(process.argv[2] || join('.data', 'benchmarks', id));
-const specDirectory = resolve('tests/generated');
+const specDirectory = resolve('.data', 'benchmark-specs', id);
 await mkdir(target, { recursive: true });
 await mkdir(specDirectory, { recursive: true });
 const executeGenerated = async (filter: string, resilient: boolean) => {
@@ -20,6 +20,7 @@ const executeGenerated = async (filter: string, resilient: boolean) => {
   const env = {
     ...process.env,
     BREAKTRACE_RESILIENT: resilient ? '1' : '0',
+    BREAKTRACE_GENERATED_DIR: specDirectory,
     PLAYWRIGHT_JSON_OUTPUT_FILE: report,
     BREAKTRACE_GENERATED_OUTPUT: join(
       target,
@@ -89,7 +90,7 @@ try {
     measurements.push(measurement);
     if (run.status === 'failed' && fixture.expected === 'failure') {
       measurement.generatedFile = `bench-${id}-${fixture.repair ? 'repair-' : ''}${scenario.id}.spec.ts`;
-      await writeFile(join(specDirectory, measurement.generatedFile), generateRegression(run));
+      await writeFile(join(specDirectory, measurement.generatedFile), generateRegression(run, '../../..'));
     }
     if (fixture.repair && isolationMatched) {
       try {
