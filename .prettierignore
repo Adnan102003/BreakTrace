@@ -1,0 +1,7 @@
+.tools
+.data
+dist
+package-lock.json
+test-results
+playwright-report
+docs/evidence
