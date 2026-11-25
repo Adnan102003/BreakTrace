@@ -4,6 +4,8 @@ import { Braces, Cable, ChevronRight, FileUp, Plus, Save, Trash2 } from 'lucide-
 import type { ExternalProject, Mutation, Project, Run } from '../../packages/shared/contracts';
 import { api, href, type Catalog, type Summary } from './client';
 import { Badge, Empty, ErrorMessage, Panel } from './ui';
+import { WorkflowRecorder } from './recorder';
+import { RuleBuilder } from './rule-builder';
 
 const format = (data: unknown) => JSON.stringify(data, null, 2);
 export function useSave() {
@@ -33,15 +35,27 @@ export function useSave() {
 export function Projects({ catalog }: { catalog: Catalog }) {
   const [selected, setSelected] = useState<Project>(catalog.projects[0]);
   const [operations, setOperations] = useState('');
+  const [deletePending, setDeletePending] = useState(false);
+  const cache = useQueryClient();
   const saved = catalog.projects.find((project) => project.id === selected.id);
   const action = useSave();
   function edit(project: Project) {
+    setDeletePending(false);
     setSelected(project);
     setOperations(
       project.kind === 'external'
         ? project.endpoints.map(({ method, path }) => `${method} ${path}`).join('\n')
         : '',
     );
+  }
+  async function removeProject() {
+    try {
+      await api(`/projects/${selected.id}`, { method: 'DELETE', body: { approved: true } });
+      edit(catalog.projects[0]);
+      await cache.invalidateQueries({ queryKey: ['config'] });
+    } catch (error) {
+      action.fail(error);
+    }
   }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,7 +81,7 @@ export function Projects({ catalog }: { catalog: Catalog }) {
     <div className="split">
       <Panel
         title="Registered projects"
-        description="Run the bundled storefront or configure a developer-owned staging origin."
+        description="Run the bundled storefront or configure a developer-owned local or staging origin."
         actions={
           <button
             className="button ghost compact"
@@ -113,6 +127,7 @@ export function Projects({ catalog }: { catalog: Catalog }) {
               <input
                 required
                 pattern="[a-z0-9][a-z0-9\-]{0,63}"
+                readOnly={Boolean(saved)}
                 value={selected.id}
                 onChange={(e) => setSelected({ ...selected, id: e.target.value })}
               />
@@ -132,14 +147,28 @@ export function Projects({ catalog }: { catalog: Catalog }) {
                   }}
                 >
                   <option value="demo">Bundled storefront</option>
-                  <option value="external">Developer-owned staging</option>
+                  <option value="external">Developer-owned application</option>
                 </select>
               </label>
             )}
             {selected.kind === 'external' ? (
               <>
                 <label>
-                  HTTPS origin
+                  Environment
+                  <select
+                    value={selected.environment ?? ''}
+                    onChange={(event) => {
+                      const environment = event.target.value as 'local' | 'staging' | '';
+                      setSelected({ ...selected, environment: environment || undefined });
+                    }}
+                  >
+                    <option value="">Infer from origin</option>
+                    <option value="local">Local</option>
+                    <option value="staging">Staging</option>
+                  </select>
+                </label>
+                <label>
+                  HTTPS origin or loopback HTTP origin
                   <input
                     type="url"
                     required
@@ -190,6 +219,21 @@ export function Projects({ catalog }: { catalog: Catalog }) {
             </button>
             {action.feedback}
           </form>
+          {saved && !['fieldwork-shop', 'fieldwork-resilient'].includes(saved.id) && (
+            <div className="actions">
+              <a className="button ghost compact" href={`${href('runs')}?project=${saved.id}`}>
+                Project history
+              </a>
+              <button className="button ghost compact" onClick={() => setDeletePending(!deletePending)}>
+                {deletePending ? 'Cancel deletion' : 'Delete project'}
+              </button>
+              {deletePending && (
+                <button className="button ghost compact" onClick={() => void removeProject()}>
+                  Confirm deletion
+                </button>
+              )}
+            </div>
+          )}
         </Panel>
         {saved?.kind === 'external' &&
           selected.kind === 'external' &&
@@ -200,8 +244,53 @@ export function Projects({ catalog }: { catalog: Catalog }) {
               authorization={catalog.authorization.find((entry) => entry.projectId === saved.id)}
             />
           )}
+        {saved && <RepositoryConnection key={saved.id} projectId={saved.id} catalog={catalog} />}
       </div>
     </div>
+  );
+}
+
+function RepositoryConnection({ projectId, catalog }: { projectId: string; catalog: Catalog }) {
+  const repositories = catalog.githubRepositories;
+  const linked = catalog.repositories.find((item) => item.projectId === projectId);
+  const [selected, setSelected] = useState(linked?.repository ?? repositories[0] ?? '');
+  const action = useSave();
+  if (!repositories.length && !linked) return null;
+  return (
+    <Panel
+      title="GitHub repository"
+      description="Choose an operator-approved repository to include its name and default branch in draft exports."
+    >
+      {linked && (
+        <p className="muted">
+          {linked.repository} · {linked.branch}
+        </p>
+      )}
+      <form
+        className="form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void action.save(`/projects/${projectId}/repository`, { repository: selected });
+        }}
+      >
+        <label>
+          Approved repository{' '}
+          <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+            {!repositories.includes(selected) && <option value={selected}>Select a repository</option>}
+            {repositories.map((repository) => (
+              <option key={repository}>{repository}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="button ghost compact"
+          disabled={!repositories.includes(selected) || action.busy}
+        >
+          Connect repository
+        </button>
+        {action.feedback}
+      </form>
+    </Panel>
   );
 }
 
@@ -217,6 +306,15 @@ function TargetAuthorization({
   const [challenge, setChallenge] = useState<{ path: string; contents: string; expiresAt: string }>();
   const [confirmation, setConfirmation] = useState(false);
   const [request, setRequest] = useState<{ busy?: boolean; error?: string; message?: string }>({});
+  async function checkConnection() {
+    setRequest({ busy: true });
+    try {
+      await api(`/projects/${project.id}/connection`, { method: 'POST' });
+      setRequest({ message: 'Connection and target proof verified.' });
+    } catch (error) {
+      setRequest({ error: (error as Error).message });
+    }
+  }
   async function submit(action: 'challenge' | 'verify' | 'revoke') {
     setRequest({ busy: true });
     try {
@@ -256,8 +354,13 @@ function TargetAuthorization({
         )}
         {!authorization?.allowlisted ? (
           <p>
-            Add <code>{project.url}</code> to <code>BREAKTRACE_ALLOWED_ORIGINS</code>, then restart the
-            API.
+            Add <code>{project.url}</code> to{' '}
+            <code>
+              {project.url.startsWith('http:')
+                ? 'BREAKTRACE_ALLOWED_LOCAL_ORIGINS'
+                : 'BREAKTRACE_ALLOWED_ORIGINS'}
+            </code>
+            , then restart the API.
           </p>
         ) : (
           <>
@@ -310,6 +413,15 @@ function TargetAuthorization({
             </button>
           </>
         )}
+        {authorization?.allowlisted && authorization.verifiedAt && (
+          <button
+            className="button ghost"
+            disabled={request.busy}
+            onClick={() => void checkConnection()}
+          >
+            Check connection
+          </button>
+        )}
         {request.error && <ErrorMessage error={request.error} />}
         {request.message && <p role="status">{request.message}</p>}
       </div>
@@ -321,107 +433,116 @@ export function Workflows({ catalog }: { catalog: Catalog }) {
   const [json, setJson] = useState(format(catalog.workflows[0]));
   const action = useSave();
   return (
-    <div className="split">
-      <Panel
-        title="Registered workflows"
-        description="Browser interactions and declarative checks"
-        actions={
-          <button
-            className="button ghost compact"
-            onClick={() =>
-              setJson(
-                format({
-                  id: '',
-                  name: '',
-                  start: '/',
-                  steps: [{ action: 'visible', target: 'page-title' }],
-                }),
-              )
-            }
-          >
-            <Plus size={15} /> New workflow
-          </button>
-        }
-      >
-        <div className="list">
-          {catalog.workflows.map((item) => (
-            <button className="list-item" key={item.id} onClick={() => setJson(format(item))}>
-              <Braces size={18} />
-              <span>
-                <strong>{item.name}</strong>
-                <small>
-                  {item.steps.length} steps · starts at {item.start}
-                </small>
-              </span>
-              <ChevronRight size={16} />
+    <div className="stack">
+      <details className="panel">
+        <summary>Open workflow recorder</summary>
+        <WorkflowRecorder catalog={catalog} draft={json} update={setJson} />
+      </details>
+      <details className="panel">
+        <summary>Open visual rule builder</summary>
+        <RuleBuilder draft={json} update={setJson} />
+      </details>
+      <div className="split">
+        <Panel
+          title="Registered workflows"
+          description="Browser interactions and declarative checks"
+          actions={
+            <button
+              className="button ghost compact"
+              onClick={() =>
+                setJson(
+                  format({
+                    id: '',
+                    name: '',
+                    start: '/',
+                    steps: [{ action: 'visible', target: 'page-title' }],
+                  }),
+                )
+              }
+            >
+              <Plus size={15} /> New workflow
             </button>
-          ))}
-        </div>
-      </Panel>
-      <Panel
-        title="Workflow and business rules"
-        description="Supported steps are navigate, click, visible, text and rules."
-      >
-        <form
-          className="form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            try {
-              void action.save('/workflows', JSON.parse(json));
-            } catch (error) {
-              action.fail(error);
-            }
-          }}
+          }
         >
-          <label>
-            Workflow JSON
-            <textarea
-              rows={21}
-              spellCheck={false}
-              value={json}
-              onChange={(e) => setJson(e.target.value)}
-            />
-          </label>
-          <p className="muted">
-            Set projectId to the external project ID to scope a workflow. Steps use same-origin paths or
-            data-testid selectors. Rules support range, equal and sum-products. Use read: "text" for
-            numeric text or omit it for data-value.
-          </p>
-          {catalog.projects.some((project) => project.kind === 'external') && (
+          <div className="list">
+            {catalog.workflows.map((item) => (
+              <button className="list-item" key={item.id} onClick={() => setJson(format(item))}>
+                <Braces size={18} />
+                <span>
+                  <strong>{item.name}</strong>
+                  <small>
+                    {item.steps.length} steps · starts at {item.start}
+                  </small>
+                </span>
+                <ChevronRight size={16} />
+              </button>
+            ))}
+          </div>
+        </Panel>
+        <Panel
+          title="Workflow and business rules"
+          description="Supported steps are navigate, click, fill, visible, text and rules."
+        >
+          <form
+            className="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              try {
+                void action.save('/workflows', JSON.parse(json));
+              } catch (error) {
+                action.fail(error);
+              }
+            }}
+          >
             <label>
-              New external workflow template
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value)
-                    setJson(
-                      format({
-                        id: '',
-                        name: '',
-                        projectId: e.target.value,
-                        start: '/',
-                        steps: [{ action: 'visible', target: 'page-title' }],
-                      }),
-                    );
-                }}
-              >
-                <option value="">Choose a project to start a new workflow</option>
-                {catalog.projects
-                  .filter((project) => project.kind === 'external')
-                  .map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-              </select>
+              Workflow JSON
+              <textarea
+                rows={21}
+                spellCheck={false}
+                value={json}
+                onChange={(e) => setJson(e.target.value)}
+              />
             </label>
-          )}
-          <button className="button primary" disabled={action.busy}>
-            <Save size={15} /> Save workflow
-          </button>
-          {action.feedback}
-        </form>
-      </Panel>
+            <p className="muted">
+              Steps use same-origin paths and data-testid selectors. Use the visual rule builder to add
+              checks against DOM values, captured API fields or an independent reference.
+            </p>
+            {catalog.projects.some((project) => project.kind === 'external') && (
+              <label>
+                New external workflow template
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value)
+                      setJson(
+                        format({
+                          id: '',
+                          name: '',
+                          projectId: e.target.value,
+                          start: '/',
+                          steps: [{ action: 'visible', target: 'page-title' }],
+                        }),
+                      );
+                  }}
+                >
+                  <option value="">Choose a project to start a new workflow</option>
+                  {catalog.projects
+                    .filter((project) => project.kind === 'external')
+                    .map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+            <button className="button primary" disabled={action.busy}>
+              <Save size={15} /> Save workflow
+            </button>
+            {action.feedback}
+          </form>
+        </Panel>
+      </div>
     </div>
   );
 }
@@ -597,7 +718,7 @@ function MutationEditor({
   );
 }
 
-export function Scenarios({ catalog }: { catalog: Catalog }) {
+export function Scenarios({ catalog, runs }: { catalog: Catalog; runs: Summary[] }) {
   const [draft, setDraft] = useState(
     catalog.scenarios.find((item) => item.id === 'multi-field-drift') ?? catalog.scenarios[0],
   );
@@ -759,8 +880,136 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
           )}
           {action.feedback}
         </form>
+        <CapturedPreviews
+          runs={runs.filter(
+            (item) =>
+              item.risk &&
+              (draft.projectId
+                ? item.projectId === draft.projectId
+                : catalog.projects.some(
+                    (entry) => entry.kind !== 'external' && entry.id === item.projectId,
+                  )),
+          )}
+          choose={(method, endpoint, field) =>
+            setDraft({
+              ...draft,
+              mutations: draft.mutations.map((mutation) =>
+                mutation.method === method && mutation.endpoint === endpoint && 'path' in mutation
+                  ? { ...mutation, path: field }
+                  : mutation,
+              ),
+            })
+          }
+          canChoose={(method, endpoint) =>
+            draft.mutations.some(
+              (mutation) =>
+                mutation.method === method && mutation.endpoint === endpoint && 'path' in mutation,
+            )
+          }
+        />
       </Panel>
     </div>
+  );
+}
+
+function CapturedPreviews({
+  runs,
+  choose,
+  canChoose,
+}: {
+  runs: Summary[];
+  choose: (method: string, endpoint: string, field: string) => void;
+  canChoose: (method: string, endpoint: string) => boolean;
+}) {
+  const [id, setId] = useState('');
+  const [operation, setOperation] = useState('');
+  const active = runs.some((item) => item.id === id);
+  const evidence = useQuery({
+    queryKey: ['run', id],
+    enabled: active,
+    queryFn: () => api<Run>(`/runs/${id}`),
+  });
+  const before = active ? (evidence.data?.baseline?.observations ?? []) : [];
+  const after = active ? (evidence.data?.variant?.observations ?? []) : [];
+  const key = (item: { method: string; path: string }) => `${item.method} ${item.path}`;
+  const choices = [...new Set([...before, ...after].map(key))];
+  const selected = choices.includes(operation) ? operation : choices[0];
+  const original = before.find((item) => key(item) === selected);
+  const mutated = after.find((item) => key(item) === selected);
+  return (
+    <details className="panel">
+      <summary>Captured response previews</summary>
+      <p className="muted">Select real execution evidence. Text and sensitive fields are redacted.</p>
+      <div className="field-grid">
+        <label>
+          Evidence run
+          <select
+            value={active ? id : ''}
+            onChange={(event) => {
+              setId(event.target.value);
+              setOperation('');
+            }}
+          >
+            <option value="">Choose a completed run</option>
+            {runs.map((item) => (
+              <option value={item.id} key={item.id}>
+                {item.scenario} · {item.createdAt.slice(11, 19)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selected && (
+          <label>
+            Captured operation
+            <select value={selected} onChange={(event) => setOperation(event.target.value)}>
+              {choices.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      {active && evidence.isLoading && <p role="status">Loading response evidence…</p>}
+      {active && evidence.error && <ErrorMessage error={evidence.error} />}
+      {selected && (
+        <div className="field-grid">
+          <div>
+            <h3>Original response</h3>
+            <pre className="code-block">
+              {original?.sample !== undefined ? format(original.sample) : 'No JSON sample captured'}
+            </pre>
+          </div>
+          <div>
+            <h3>Mutated response</h3>
+            <pre className="code-block">
+              {mutated?.sample !== undefined ? format(mutated.sample) : 'No JSON sample captured'}
+            </pre>
+          </div>
+        </div>
+      )}
+      {original && canChoose(original.method, original.path) && (
+        <label>
+          Use a captured JSON path
+          <select
+            value=""
+            onChange={(event) => choose(original.method, original.path, event.target.value)}
+          >
+            <option value="" disabled>
+              Choose a field for matching mutations
+            </option>
+            {[
+              ...new Set(
+                Object.keys(original.shape)
+                  .filter((item) => item !== '$')
+                  .map((item) => item.replaceAll('[]', '.0')),
+              ),
+            ].map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </select>
+        </label>
+      )}
+    </details>
   );
 }
 

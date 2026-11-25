@@ -16,6 +16,10 @@ export type Catalog = {
   imported: ApiOperation[];
   thresholds: Gate;
   ai: boolean;
+  providers: ('ollama' | 'gemini' | 'openai')[];
+  githubRepositories: string[];
+  repositories: { projectId: string; repository: string; branch: string; linkedAt: string }[];
+  staticRepairProjects: string[];
   storage: 'json' | 'mongo';
   authorization: { projectId: string; allowlisted: boolean; verifiedAt?: string }[];
   projectImports: { projectId: string; operations: ApiOperation[] }[];
@@ -27,6 +31,7 @@ export type Summary = {
   status: Run['status'];
   risk?: Risk;
   project: string;
+  projectId: string;
   workflow: string;
   scenario: string;
   findings: number;

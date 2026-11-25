@@ -16,6 +16,7 @@ export async function executeRun(
   directory?: string,
   update: (phase: string) => void | Promise<void> = () => {},
   target?: PinnedTarget,
+  signal = AbortSignal.timeout(360_000),
 ) {
   const external = run.project.kind === 'external' ? run.project : undefined;
   if (external && (!target || target.origin !== external.url))
@@ -36,6 +37,7 @@ export async function executeRun(
       [],
       save('baseline.png'),
       transport,
+      signal,
     );
     await update('Applying response mutations');
     const active = ids(run.scenario.mutations.length);
@@ -46,6 +48,7 @@ export async function executeRun(
       active,
       save('variant.png'),
       transport,
+      signal,
     );
     run.findings = compareIssues(run.baseline, run.variant);
     let result: Run['status'] = run.baseline.issueLog.length
@@ -62,13 +65,20 @@ export async function executeRun(
       run.isolation = await isolate(active.length, signature, async (subset) =>
         compareIssues(
           run.baseline!,
-          await runner.execute(origin, run.workflow, run.scenario, subset, undefined, transport),
+          await runner.execute(origin, run.workflow, run.scenario, subset, undefined, transport, signal),
         ).map((issue) => issue.key),
       );
     }
+    signal.throwIfAborted();
     run.status = result;
     run.risk = assess(run);
     run.phase = 'Complete';
+  } catch (error) {
+    if (signal.aborted)
+      throw new TargetError(
+        'Execution exceeded the six-minute limit. Completed evidence was preserved.',
+      );
+    throw error;
   } finally {
     await demo?.close();
   }

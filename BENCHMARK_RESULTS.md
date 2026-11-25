@@ -44,3 +44,20 @@ These curated synthetic fixtures evaluate the included workflows on the measured
 The Phase 2 rerun executed the same 30 fixtures on November 25, 2026 in Asia/Colombo. It detected all 20 injected failures, passed all 10 controls, and isolated the labeled mutation set in all 20 failing cases. All 20 generated specs reproduced the original failure. Both eligible generated specs and both repair verifications passed with the reviewed patch. The observed mean was 2,730 ms. The two timing measurements came from separate local runs without a controlled performance comparison. [Phase 2 summary](docs/evidence/phase2-summary.json)
 
 Run `npm run benchmark -- .data/phase2-benchmark` to reproduce the rerun. The workspace output contains the raw browser, trial and Playwright reports. The staging integration tests use a separate synthetic response transport.
+
+## V2 Fieldwork rerun
+
+On November 25, 2026, the original 30-case fixture suite detected 20 of 20 labeled failures and passed all 10 controls. The labeled subset matched all 20 verified isolations. All 20 generated specs exposed their expected failure, and both eligible specs passed after repair. Both full repair verifications passed. Mean execution time was 2,554 ms on this local run. [V2 Fieldwork summary](docs/evidence/v2-fieldwork-summary.json)
+
+## V2 Room Board evaluation
+
+Room Board is a separate scheduling fixture served over an approved loopback origin. Its workflow reads room availability and compares the rendered seat count with API fields and an independent reference. The four labeled cases ran in Chromium on November 25, 2026. [Room Board results](docs/evidence/v2-room-board-summary.json)
+
+| Case                              | Observed          | Verified isolated mutation indices |
+| --------------------------------- | ----------------- | ---------------------------------- |
+| Baseline                          | Passed            | —                                  |
+| Capacity field renamed            | Failed four rules | `[0]`                              |
+| Reserved seat count made negative | Failed two rules  | `[0]`                              |
+| Unused room label removed         | Passed            | —                                  |
+
+Run `npm run benchmark:rooms -- .data/room-board-evaluation` to reproduce. The command writes the summary, each full run and available screenshots. This evaluation measures the named workflows and mutations on the two fixtures.

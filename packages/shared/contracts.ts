@@ -61,16 +61,25 @@ export const scenarioSchema = z.object({
 });
 export type Scenario = z.infer<typeof scenarioSchema>;
 
-const testId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/);
-const pagePath = z
+export const testId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/);
+export const pagePath = z
   .string()
   .max(180)
   .regex(/^\/(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]*$/)
   .refine(noTraversal);
 const source = z.discriminatedUnion('from', [
-  z.object({ from: z.literal('dom'), key: testId, read: z.enum(['data-value', 'text']).optional() }),
-  z.object({ from: z.literal('literal'), value: z.number().finite() }),
+  z.object({
+    from: z.literal('dom'),
+    key: testId,
+    read: z.enum(['data-value', 'text', 'string']).optional(),
+  }),
+  z.object({
+    from: z.literal('literal'),
+    value: z.union([z.number().finite(), z.string().max(150), z.boolean(), z.null()]),
+  }),
+  z.object({ from: z.literal('api'), method, endpoint, path: field }),
 ]);
+export type RuleSource = z.infer<typeof source>;
 export const ruleSchema = z.discriminatedUnion('op', [
   z
     .object({
@@ -83,6 +92,22 @@ export const ruleSchema = z.discriminatedUnion('op', [
     })
     .refine((rule) => rule.min <= rule.max),
   z.object({ id, name, op: z.literal('equal'), left: source, right: source }),
+  z.object({
+    id,
+    name,
+    op: z.literal('compare'),
+    comparison: z.enum(['neq', 'lt', 'lte', 'gt', 'gte']),
+    left: source,
+    right: source,
+  }),
+  z.object({ id, name, op: z.literal('required'), source }),
+  z.object({
+    id,
+    name,
+    op: z.literal('type'),
+    source,
+    expected: z.enum(['string', 'number', 'boolean', 'null', 'object', 'array']),
+  }),
   z.object({
     id,
     name,
@@ -99,6 +124,11 @@ export type Rule = z.infer<typeof ruleSchema>;
 export const stepSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('navigate'), path: pagePath }),
   z.object({ action: z.literal('click'), target: testId, path: pagePath.optional() }),
+  z.object({
+    action: z.literal('fill'),
+    target: testId,
+    input: z.string().regex(/^BREAKTRACE_INPUT_[A-Z0-9_]{1,60}$/),
+  }),
   z.object({ action: z.literal('visible'), target: testId }),
   z.object({ action: z.literal('text'), target: testId, value: z.string().max(100) }),
   z.object({ action: z.literal('rules'), rules: z.array(ruleSchema).min(1).max(10) }),
@@ -126,6 +156,25 @@ export const workflowSchema = z
     return new Set(ids).size === ids.length;
   }, 'Rule IDs must be unique within a workflow');
 export type Workflow = z.infer<typeof workflowSchema>;
+export const recorderCommand = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('pick'),
+    x: z.number().int().min(0).max(1160),
+    y: z.number().int().min(0).max(760),
+  }),
+  z.object({ action: z.literal('fill'), target: testId, value: z.string().max(200) }),
+  z.object({ action: z.literal('step'), step: stepSchema }),
+]);
+export type RecorderCommand = z.infer<typeof recorderCommand>;
+export type Recording = {
+  id: string;
+  path: string;
+  projectId: string;
+  draft: Workflow;
+  screenshot: string;
+  operations: { method: string; path: string; status: number | null }[];
+  validated?: boolean;
+};
 const demoProjectSchema = z.object({
   id,
   name,
@@ -142,6 +191,7 @@ export const externalProjectSchema = z.object({
   id,
   name,
   url: z.url().max(240),
+  environment: z.enum(['local', 'staging']).optional(),
   endpoints: z
     .array(externalOperationSchema)
     .max(80)
@@ -175,6 +225,7 @@ export function matchOperation(operations: ApiOperation[], method: string, path:
   });
 }
 export type Shape = Record<string, string>;
+export type JsonValue = z.infer<ReturnType<typeof z.json>>;
 export type Observation = {
   method: string;
   path: string;
@@ -182,6 +233,7 @@ export type Observation = {
   status: number | null;
   durationMs: number;
   shape: Shape;
+  sample?: JsonValue;
 };
 export type Issue = {
   key: string;
@@ -232,6 +284,7 @@ export type Repair = {
   checks: { name: string; passed: boolean }[];
   passed: boolean;
   patch: string;
+  review?: { files: string[]; diff: string };
 };
 export type Run = {
   id: string;

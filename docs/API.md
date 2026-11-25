@@ -51,3 +51,24 @@ Field operators include `remove`, `rename`, `null`, `type`, `empty-array`, `numb
 A workflow starts on a same-origin path. Its steps use `navigate`, `click` with an optional expected `path`, `visible`, exact `text`, or a `rules` array. Rule operands are `{ "from": "dom", "key": "test-id" }` and `{ "from": "literal", "value": 42 }`. Set `read` to `text` for a DOM operand that contains a plain number. Workflows and scenarios require `projectId` for external projects. Full examples are in [packages/shared/demo.ts](../packages/shared/demo.ts).
 
 Errors use `{ error: string }`. HTTP 400 marks invalid input, 403 rejects disallowed browser origins, 404 marks missing resources, 409 indicates an unavailable state, and 429 indicates a busy queue.
+
+## V2 operations
+
+| Method and path                    | Input and result                                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT /projects`                    | External projects may set `environment` to `local` or `staging`. Existing clients can omit it to infer the setting from the approved origin. |
+| `POST /projects/:id/connection`    | Fetch and verify the project’s existing proof again.                                                                                         |
+| `DELETE /projects/:id`             | Delete a user-defined project and its configuration with `{ "approved": true }`. Historical runs remain available.                           |
+| `PUT /projects/:id/repository`     | Verify and link `{ "repository": "owner/name" }` from the operator’s GitHub allowlist.                                                       |
+| `POST /recordings`                 | Start a browser recording with `{ projectId, start }`.                                                                                       |
+| `POST /recordings/:id/steps`       | Append `pick`, `fill`, or a declarative `step`. The response contains a masked screenshot and the draft.                                     |
+| `POST /recordings/:id/replay`      | Replay an edited workflow in a new browser context. Save the validated draft with `PUT /workflows`.                                          |
+| `DELETE /recordings/:id`           | Close the browser session.                                                                                                                   |
+| `GET /runs?projectId=SLUG`         | Scope run history to a project. An identical active submission reuses the existing run ID.                                                   |
+| `GET /runs/:id/report?format=html` | Download the evidence report. `pdf` and `json` are also supported. JSON remains the default.                                                 |
+| `GET /runs/:id/drafts/:kind`       | Render `issue`, `pull-request` or `workflow`. Add `download=1` to download the draft.                                                        |
+| `POST /runs/:id/analysis`          | Select `{ provider }` from `ollama`, `gemini` or `openai` when configured.                                                                   |
+| `POST /runs/:id/repair/preview`    | Review `{ changes: [{ path, content }] }` for an operator-approved static directory.                                                         |
+| `POST /runs/:id/repair`            | Verify a static patch with `{ "approved": true, "reviewId": "…" }`. The demo patch only requires `approved`.                                 |
+
+`fill` steps store the input variable name and never persist the recorder’s typed value. API rule operands use `{ "from": "api", "method": "GET", "endpoint": "/items/{id}", "path": "item.total" }`. Rules can compare operands, check bounds or types, require a value, or compute a sum of products with an optional deduction.

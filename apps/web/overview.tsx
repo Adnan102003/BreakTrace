@@ -12,6 +12,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useState } from 'react';
+import type { Project } from '../../packages/shared/contracts';
 import type { Summary } from './client';
 import { href } from './client';
 import { Badge, Empty, Panel, RunTable } from './ui';
@@ -86,26 +88,32 @@ function Pipeline() {
 
 export function Overview({
   runs,
+  projects,
   runDemo,
   busy,
 }: {
   runs: Summary[];
+  projects: Project[];
   runDemo: () => void;
   busy: boolean;
 }) {
-  const completed = runs.filter((run) => run.risk);
+  const [projectId, setProjectId] = useState('');
+  const scoped = projectId ? runs.filter((run) => run.projectId === projectId) : runs;
+  const completed = scoped.filter(
+    (run) => run.risk && ['passed', 'failed', 'inconclusive'].includes(run.status),
+  );
   const recent = completed[0];
   const metrics = [
     {
       name: 'Total executions',
-      value: runs.length,
-      hint: 'Across local projects',
+      value: scoped.length,
+      hint: `${scoped.filter((run) => ['queued', 'running'].includes(run.status)).length} queued or running`,
       icon: Activity,
       tone: 'purple',
     },
     {
       name: 'Detected regressions',
-      value: runs.filter((run) => run.status === 'failed').length,
+      value: scoped.filter((run) => run.status === 'failed').length,
       hint: 'Runs with new findings',
       icon: GitPullRequestArrow,
       tone: 'red',
@@ -122,7 +130,8 @@ export function Overview({
       value: recent?.risk?.gate ?? '—',
       hint: 'Latest completed execution',
       icon: ShieldCheck,
-      tone: 'green',
+      tone:
+        recent?.risk?.gate === 'BLOCK' ? 'red' : recent?.risk?.gate === 'WARNING' ? 'amber' : 'green',
     },
   ];
   const series = completed
@@ -148,6 +157,19 @@ export function Overview({
         </div>
         <Pipeline />
       </div>
+      <div className="actions dashboard-filter">
+        <label>
+          Dashboard project{' '}
+          <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+            <option value="">All projects</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="metrics">
         {metrics.map(({ name, value, hint, icon: Icon, tone }) => (
           <section className="metric" key={name}>
@@ -167,12 +189,15 @@ export function Overview({
           title="Recent executions"
           description="Baseline and mutation runs in this workspace"
           actions={
-            <a className="button ghost compact" href={href('runs')}>
+            <a
+              className="button ghost compact"
+              href={`${href('runs')}${projectId ? `?project=${projectId}` : ''}`}
+            >
               All runs <ArrowUpRight size={14} />
             </a>
           }
         >
-          <RunTable rows={runs.slice(0, 5)} />
+          <RunTable rows={scoped.slice(0, 5)} />
         </Panel>
         <Panel
           title="Risk trend"

@@ -11,6 +11,7 @@
     "dev:api": "tsx watch apps/api/main.ts",
     "dev:web": "vite --host 127.0.0.1",
     "demo": "tsx apps/demo/main.ts",
+    "fixture:rooms": "tsx scripts/room-board.ts",
     "start": "tsx apps/api/main.ts",
     "build": "npm run typecheck && vite build",
     "typecheck": "tsc --noEmit",
@@ -21,6 +22,7 @@
     "test:generated": "playwright test --config playwright.generated.config.ts",
     "smoke": "tsx scripts/smoke.ts",
     "benchmark": "tsx scripts/benchmark.ts",
+    "benchmark:rooms": "tsx scripts/rooms-benchmark.ts",
     "gate": "tsx scripts/gate.ts"
   },
   "dependencies": {

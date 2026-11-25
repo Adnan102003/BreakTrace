@@ -4,14 +4,32 @@ import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import type { Execution, Issue, Scenario, Step, Workflow } from '../../packages/shared/contracts';
-import { installInterception, type ExternalTransport } from '../../packages/mutation-engine';
+import type {
+  Execution,
+  Issue,
+  RuleSource,
+  Scenario,
+  Step,
+  Workflow,
+} from '../../packages/shared/contracts';
+import {
+  installInterception,
+  responseField,
+  responseSample,
+  type ExternalTransport,
+} from '../../packages/mutation-engine';
 import { evaluate } from '../../packages/validation-engine';
 
-const windowSize = { width: 1160, height: 760 };
+export const windowSize = { width: 1160, height: 760 };
 const currentPath = (page: Page) => new URL(page.url()).pathname;
 
-export async function checkStep(page: Page, step: Step, demo = true) {
+export async function checkStep(
+  page: Page,
+  step: Step,
+  demo = true,
+  input: (key: string) => string | undefined = (key) => process.env[key],
+  api: (source: Extract<RuleSource, { from: 'api' }>) => unknown = () => undefined,
+) {
   if (step.action === 'navigate') {
     const next = new URL(step.path, page.url());
     await page.goto(next.href, { waitUntil: 'domcontentloaded' });
@@ -21,19 +39,33 @@ export async function checkStep(page: Page, step: Step, demo = true) {
   if (step.action === 'rules') {
     return Promise.all(
       step.rules.map((rule) =>
-        evaluate(rule, async (key, read) => {
-          const node = page.getByTestId(key);
-          const value = await (
-            read === 'text'
-              ? node.innerText({ timeout: 1400 })
-              : node.getAttribute('data-value', { timeout: 1400 })
-          ).catch(() => null);
-          return value !== null && value.trim() && Number.isFinite(Number(value)) ? Number(value) : null;
-        }),
+        evaluate(
+          rule,
+          async (key, read) => {
+            const node = page.getByTestId(key);
+            const value = await (
+              read === 'text' || read === 'string'
+                ? node.innerText({ timeout: 1400 })
+                : node.getAttribute('data-value', { timeout: 1400 })
+            ).catch(() => null);
+            if (read === 'string') return value?.trim();
+            return value !== null && value.trim() && Number.isFinite(Number(value))
+              ? Number(value)
+              : null;
+          },
+          api,
+        ),
       ),
     );
   }
   const node = page.getByTestId(step.target);
+  if (step.action === 'fill') {
+    const value = input(step.input);
+    if (value === undefined || value.length > 200)
+      throw new Error('A workflow input variable is missing or too long');
+    await node.fill(value);
+    return [];
+  }
   const storeError = page.getByTestId('store-error');
   if (demo) {
     await node.or(storeError).first().waitFor({ state: 'visible', timeout: 5000 });
@@ -106,19 +138,12 @@ export class BrowserRunner {
     }
   }
 
-  async execute(
-    origin: string,
-    workflow: Workflow,
-    scenario: Scenario,
-    indices: number[],
-    artifact?: { directory: string; name: string },
-    external?: ExternalTransport,
-  ): Promise<Execution> {
+  async context(external: boolean) {
     if (external && !this.externalBrowser?.isConnected())
       this.externalBrowser = await this.launchExternal();
     if (!external && !this.browser?.isConnected()) this.browser = await chromium.launch();
     const browser = external ? this.externalBrowser! : this.browser!;
-    const context = await browser.newContext({
+    return browser.newContext({
       viewport: windowSize,
       deviceScaleFactor: 1,
       serviceWorkers: 'block',
@@ -126,6 +151,23 @@ export class BrowserRunner {
       reducedMotion: 'reduce',
       locale: 'en-US',
     });
+  }
+
+  async execute(
+    origin: string,
+    workflow: Workflow,
+    scenario: Scenario,
+    indices: number[],
+    artifact?: { directory: string; name: string },
+    external?: ExternalTransport,
+    signal?: AbortSignal,
+  ): Promise<Execution> {
+    signal?.throwIfAborted();
+    const context = await this.context(Boolean(external));
+    const abort = () => {
+      void context.close().catch(() => {});
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     const start = performance.now();
     const output: Execution = {
       issueLog: [],
@@ -138,6 +180,7 @@ export class BrowserRunner {
     const pages = new Set<string>();
     const seen = new Set<string>();
     const applied = new Set<number>();
+    const responses = new Map<string, unknown>();
     const log = (issue: Issue) => {
       issue.severity = issue.kind === 'network' || issue.kind === 'console' ? 'medium' : 'high';
       if (!seen.has(issue.key) && output.issueLog.length < 80) output.issueLog.push(issue);
@@ -146,6 +189,7 @@ export class BrowserRunner {
     let screen: Buffer | undefined;
     let capturedFailure = false;
     try {
+      signal?.throwIfAborted();
       const page = await context.newPage();
       page.setDefaultTimeout(2100);
       page.setDefaultNavigationTimeout(5000);
@@ -157,8 +201,17 @@ export class BrowserRunner {
         (event) => {
           for (const index of event.applied) applied.add(index);
           if (output.observations.length >= 80) return;
-          const { url, method, path, shape, status, durationMs } = event;
-          output.observations.push({ method, path, shape, status, durationMs, page: url });
+          const { url, method, path, shape, status, durationMs, data } = event;
+          responses.set(`${method} ${path}`, data);
+          output.observations.push({
+            method,
+            path,
+            shape,
+            status,
+            durationMs,
+            page: url,
+            sample: data === undefined ? undefined : responseSample(data),
+          });
           if (event.status === null || event.status >= 400)
             log({
               key: `network:${event.method}:${event.path}:${event.status ?? 'aborted'}`,
@@ -196,7 +249,12 @@ export class BrowserRunner {
       const capture = async (isFailure: boolean) => {
         if (!artifact || capturedFailure) return;
         const image = await page
-          .screenshot({ animations: 'disabled', timeout: 2500 })
+          .screenshot({
+            animations: 'disabled',
+            timeout: 2500,
+            mask: [page.locator('input, textarea, select, [contenteditable], [data-sensitive]')],
+            maskColor: '#202530',
+          })
           .catch(() => undefined);
         if (image) {
           screen = image;
@@ -206,10 +264,13 @@ export class BrowserRunner {
       };
       await page.goto(origin + workflow.start, { waitUntil: 'domcontentloaded' });
       for (const [index, step] of workflow.steps.entries()) {
+        signal?.throwIfAborted();
         if (performance.now() - start > 30_000)
           throw new Error('Workflow exceeded the browser execution budget');
         try {
-          const evidence = await checkStep(page, step, !external);
+          const evidence = await checkStep(page, step, !external, undefined, (source) =>
+            responseField(responses.get(`${source.method} ${source.endpoint}`), source.path),
+          );
           output.rules.push(...evidence);
           for (const rule of evidence.filter((result) => !result.passed)) {
             log({
@@ -243,6 +304,7 @@ export class BrowserRunner {
       if (!screen) await capture(false);
       await context.unrouteAll({ behavior: 'wait' });
     } finally {
+      signal?.removeEventListener('abort', abort);
       await context.close();
     }
     if (artifact && screen) {

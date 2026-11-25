@@ -16,6 +16,12 @@ const targets = new TargetAuthority(
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
+  undefined,
+  undefined,
+  (process.env.BREAKTRACE_ALLOWED_LOCAL_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 );
 const store = process.env.BREAKTRACE_MONGO_URI
   ? await connectMongo(

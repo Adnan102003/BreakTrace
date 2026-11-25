@@ -256,7 +256,10 @@ export function Experiments({ run }: { run: Run }) {
   );
 }
 
-export function RootCause({ run, ai }: { run: Run; ai: boolean }) {
+const providerLabels = { ollama: 'Ollama', gemini: 'Gemini', openai: 'OpenAI' };
+export function RootCause({ run, providers }: { run: Run; providers: (keyof typeof providerLabels)[] }) {
+  const [preferred, setPreferred] = useState<keyof typeof providerLabels>();
+  const provider = preferred && providers.includes(preferred) ? preferred : providers[0];
   const analysis = useQuery({
     queryKey: ['analysis', run.id, run.phase],
     queryFn: () =>
@@ -264,7 +267,10 @@ export function RootCause({ run, ai }: { run: Run; ai: boolean }) {
   });
   const suggestion = useMutation({
     mutationFn: () =>
-      api<{ source: string; text: string }>(`/runs/${run.id}/analysis`, { method: 'POST' }),
+      api<{ source: string; text: string }>(`/runs/${run.id}/analysis`, {
+        method: 'POST',
+        body: { provider },
+      }),
   });
   return (
     <div className="stack">
@@ -282,19 +288,43 @@ export function RootCause({ run, ai }: { run: Run; ai: boolean }) {
         </div>
       </Panel>
       <Panel
-        title="Local AI analysis"
+        title="Optional AI analysis"
         description={
-          ai
-            ? 'Suggestions are unverified until exercised in the browser.'
-            : 'Set BREAKTRACE_OLLAMA_MODEL to use a locally installed Ollama model.'
+          provider
+            ? 'Suggestions use the recorded evidence and remain unverified until exercised in the browser.'
+            : 'Configure Ollama, OpenAI or Gemini in the server environment to enable model analysis.'
         }
       >
+        {providers.length > 1 && (
+          <label>
+            Model provider
+            <select
+              value={provider}
+              onChange={(event) => setPreferred(event.target.value as keyof typeof providerLabels)}
+            >
+              {providers.map((item) => (
+                <option key={item} value={item}>
+                  {providerLabels[item]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {provider && provider !== 'ollama' && (
+          <p className="muted">
+            Analysis sends a bounded evidence summary to {providerLabels[provider]}.
+          </p>
+        )}
         <button
           className="button ghost"
-          disabled={!ai || suggestion.isPending}
+          disabled={!provider || !run.variant || suggestion.isPending}
           onClick={() => suggestion.mutate()}
         >
-          {suggestion.isPending ? 'Analyzing…' : 'Analyze with Ollama'}
+          {suggestion.isPending
+            ? 'Analyzing…'
+            : provider
+              ? `Analyze with ${providerLabels[provider]}`
+              : 'Analyze'}
         </button>
         {suggestion.error && <ErrorMessage error={suggestion.error} />}
         {suggestion.data && (
@@ -308,41 +338,98 @@ export function RootCause({ run, ai }: { run: Run; ai: boolean }) {
   );
 }
 
+const draftNames = {
+  issue: 'Issue description',
+  'pull-request': 'Pull request',
+  workflow: 'CI quality gate',
+};
+
 export function Regression({ run }: { run: Run }) {
   const ready = Boolean(run.variant) && !['queued', 'running', 'error'].includes(run.status);
+  const [kind, setKind] = useState<keyof typeof draftNames>('issue');
+  const [review, setReview] = useState(false);
   const code = useQuery({
     queryKey: ['test', run.id],
     queryFn: () => api<string>(`/runs/${run.id}/test`),
     enabled: ready,
   });
+  const draftPath = `/runs/${run.id}/drafts/${kind}`;
+  const draft = useQuery({
+    queryKey: ['repository-draft', run.id, kind],
+    queryFn: () => api<string>(draftPath),
+    enabled: ready && review,
+  });
   return (
-    <Panel
-      title="Playwright TypeScript regression"
-      description="Save the generated spec under tests/generated/ and run it from the project root."
-      actions={
-        ready && (
-          <a className="button primary compact" href={`/api/runs/${run.id}/test?download=1`}>
-            <Download size={15} /> Export .spec.ts
-          </a>
-        )
-      }
-    >
-      {!ready && <p className="muted">A completed execution is required.</p>}
-      {ready && code.isLoading && <Loading />}
-      {code.error && <ErrorMessage error={code.error} />}
-      {code.data && (
-        <pre className="code-block">
-          <Code2 size={16} aria-hidden="true" />
-          <code>{code.data}</code>
-        </pre>
+    <div className="stack">
+      <Panel
+        title="Playwright TypeScript regression"
+        description="Save the generated spec under tests/generated/ and run it from the project root."
+        actions={
+          ready && (
+            <a className="button primary compact" href={`/api/runs/${run.id}/test?download=1`}>
+              <Download size={15} /> Export .spec.ts
+            </a>
+          )
+        }
+      >
+        {!ready && <p className="muted">A completed execution is required.</p>}
+        {ready && code.isLoading && <Loading />}
+        {code.error && <ErrorMessage error={code.error} />}
+        {code.data && (
+          <pre className="code-block">
+            <Code2 size={16} aria-hidden="true" />
+            <code>{code.data}</code>
+          </pre>
+        )}
+      </Panel>
+      {ready && (
+        <Panel
+          title="Repository drafts"
+          description="Review an evidence-based issue, proposed pull request, or workflow for a recorded quality gate."
+        >
+          <div className="actions">
+            <label>
+              Draft type{' '}
+              <select
+                value={kind}
+                onChange={(event) => setKind(event.target.value as keyof typeof draftNames)}
+              >
+                {Object.entries(draftNames).map(([value, name]) => (
+                  <option key={value} value={value}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!review && (
+              <button className="button ghost compact" onClick={() => setReview(true)}>
+                Preview draft
+              </button>
+            )}
+            {review && draft.data && (
+              <a className="button ghost compact" href={`/api${draftPath}?download=1`}>
+                <Download size={15} /> Download draft
+              </a>
+            )}
+          </div>
+          {review && draft.isLoading && <Loading />}
+          {draft.error && <ErrorMessage error={draft.error} />}
+          {review && draft.data && (
+            <pre className="code-block">
+              <code>{draft.data}</code>
+            </pre>
+          )}
+        </Panel>
       )}
-    </Panel>
+    </div>
   );
 }
 
-export function Repair({ run }: { run: Run }) {
+export function Repair({ run, staticEnabled }: { run: Run; staticEnabled: boolean }) {
   const cache = useQueryClient();
   const [approved, setApproved] = useState(false);
+  const [changes, setChanges] = useState('[\n  {"path": "app.js", "content": ""}\n]');
+  const external = run.project.kind === 'external';
   const supported =
     run.project.kind !== 'external' &&
     run.project.version === 'original' &&
@@ -352,46 +439,126 @@ export function Repair({ run }: { run: Run }) {
       const item = run.scenario.mutations[index];
       return item.operator === 'rename' && item.path === 'price' && item.to === 'productPrice';
     });
+  const preview = useMutation({
+    mutationFn: () =>
+      api<{ id: string; files: string[]; diff: string }>(`/runs/${run.id}/repair/preview`, {
+        method: 'POST',
+        body: { changes: JSON.parse(changes) as unknown },
+      }),
+  });
   const verification = useMutation({
-    mutationFn: () => api(`/runs/${run.id}/repair`, { method: 'POST', body: { approved: true } }),
+    mutationFn: () =>
+      api(`/runs/${run.id}/repair`, {
+        method: 'POST',
+        body: { approved: true, reviewId: preview.data?.id },
+      }),
     onSuccess: () => {
       setApproved(false);
+      preview.reset();
       void cache.invalidateQueries({ queryKey: ['run', run.id] });
     },
   });
   return (
     <div className="stack">
-      <Panel
-        title="Reviewed pricing patch"
-        description="Accept integer cents from the original or renamed price field. Verify the patch in an isolated copy of the demo."
-      >
-        {supported ? (
-          <div className="form">
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={approved}
-                onChange={(e) => setApproved(e.target.checked)}
-              />{' '}
-              Apply the reviewed patch to the isolated copy
-            </label>
-            <button
-              className="button primary"
-              disabled={!approved || verification.isPending || run.phase !== 'Complete'}
-              onClick={() => verification.mutate()}
-            >
-              <FlaskConical size={16} /> Verify repair
-            </button>
-            {run.phase !== 'Complete' && <p role="status">{run.phase}…</p>}
-          </div>
-        ) : (
-          <p className="muted">
-            Available after the original demo reproduces an isolated price-field rename.
-          </p>
-        )}
-        {verification.error && <ErrorMessage error={verification.error} />}
-        {run.error && <ErrorMessage error={run.error} />}
-      </Panel>
+      {external ? (
+        <Panel
+          title="Review replacements"
+          description="Preview the exact diff before approving verification in an isolated copy of the configured static site."
+        >
+          {staticEnabled && run.status === 'failed' ? (
+            <div className="form">
+              <label>
+                File replacements (JSON)
+                <textarea
+                  rows={9}
+                  spellCheck={false}
+                  value={changes}
+                  disabled={preview.isPending}
+                  onChange={(event) => {
+                    setChanges(event.target.value);
+                    setApproved(false);
+                    preview.reset();
+                  }}
+                />
+              </label>
+              <button
+                className="button ghost compact"
+                disabled={preview.isPending || verification.isPending || run.phase !== 'Complete'}
+                onClick={() => {
+                  setApproved(false);
+                  preview.mutate();
+                }}
+              >
+                Preview diff
+              </button>
+              {preview.error && <ErrorMessage error={preview.error} />}
+              {preview.data && (
+                <>
+                  <p className="muted">Affected files · {preview.data.files.join(', ')}</p>
+                  <pre className="code-block">
+                    <code>{preview.data.diff}</code>
+                  </pre>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={approved}
+                      onChange={(event) => setApproved(event.target.checked)}
+                    />{' '}
+                    Approve these replacements for the isolated copy
+                  </label>
+                  <button
+                    className="button primary"
+                    disabled={!approved || verification.isPending || run.phase !== 'Complete'}
+                    onClick={() => verification.mutate()}
+                  >
+                    <FlaskConical size={16} /> Verify repair
+                  </button>
+                </>
+              )}
+              {run.phase !== 'Complete' && <p role="status">{run.phase}…</p>}
+            </div>
+          ) : (
+            <p className="muted">
+              This requires a failed experiment and a static directory approved by the workspace
+              operator.
+            </p>
+          )}
+          {verification.error && <ErrorMessage error={verification.error} />}
+          {run.error && <ErrorMessage error={run.error} />}
+        </Panel>
+      ) : (
+        <Panel
+          title="Reviewed pricing patch"
+          description="Accept integer cents from the original or renamed price field. Verify the patch in an isolated copy of the demo."
+        >
+          {supported ? (
+            <div className="form">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={approved}
+                  onChange={(e) => setApproved(e.target.checked)}
+                />{' '}
+                Apply the reviewed patch to the isolated copy
+              </label>
+              <button
+                className="button primary"
+                disabled={!approved || verification.isPending || run.phase !== 'Complete'}
+                onClick={() => verification.mutate()}
+              >
+                <FlaskConical size={16} /> Verify repair
+              </button>
+              {run.phase !== 'Complete' && <p role="status">{run.phase}…</p>}
+            </div>
+          ) : (
+            <p className="muted">
+              Available after the original demo reproduces an isolated price-field rename.
+            </p>
+          )}
+          {verification.error && <ErrorMessage error={verification.error} />}
+          {run.error && <ErrorMessage error={run.error} />}
+        </Panel>
+      )}
       {run.repair && (
         <Panel
           title="Verification results"
@@ -406,6 +573,14 @@ export function Repair({ run }: { run: Run }) {
               </div>
             ))}
           </div>
+          {run.repair.review && (
+            <details>
+              <summary>Verified diff · {run.repair.review.files.join(', ')}</summary>
+              <pre className="code-block">
+                <code>{run.repair.review.diff}</code>
+              </pre>
+            </details>
+          )}
           <div className="split equal">
             {[run.repair.before, run.repair.after].map(
               (result, index) =>
@@ -450,14 +625,27 @@ export function DeploymentRisk({ run }: { run: Run }) {
             <small> / 100</small>
           </strong>
         </div>
-        <progress value={run.risk.score} max={100} aria-label="Evidence risk score" />
+        <progress
+          value={run.risk.score}
+          max={100}
+          data-gate={run.risk.gate}
+          aria-label="Evidence risk score"
+        />
         <p className="muted">
           {run.risk.coverage.observed} of {run.risk.coverage.total} registered endpoints observed ·
           Warning at {run.risk.thresholds.warning} · Block at {run.risk.thresholds.block}
         </p>
-        <a className="button ghost" href={`/api/runs/${run.id}/report`}>
-          <Download size={15} /> Export JSON report
-        </a>
+        <div className="actions">
+          {(['JSON', 'HTML', 'PDF'] as const).map((format) => (
+            <a
+              key={format}
+              className="button ghost"
+              href={`/api/runs/${run.id}/report?format=${format.toLowerCase()}`}
+            >
+              <Download size={15} /> Export {format} report
+            </a>
+          ))}
+        </div>
       </Panel>
       <Panel title="Score breakdown">
         <div className="rule-list">

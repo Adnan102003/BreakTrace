@@ -7,6 +7,8 @@ import { Server } from 'socket.io';
 import { z } from 'zod';
 import {
   gateSchema,
+  pagePath,
+  recorderCommand,
   externalOperationSchema,
   projectSchema,
   scenarioSchema,
@@ -22,18 +24,21 @@ import {
   importOperations,
   openApiSchema,
   parseOpenApiDocument,
-  optionalOllama,
+  configuredProviders,
   recommendations,
 } from './analysis';
 import { BrowserRunner } from './browser';
 import { canVerify, executeRun, verifyRepair } from './execution';
 import { Store, type Catalog, type Persistence } from './store';
-import { externalOrigin, TargetAuthority, TargetError } from './targets';
+import { Recorder } from './recorder';
+import { printReport, renderReport } from './reports';
+import { githubRepositories, repositoryDraft, repositorySlug } from './repositories';
+import { repairChanges, StaticRepairs } from './static-repair';
+import { targetOrigin, TargetAuthority, TargetError } from './targets';
 
 const slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const runId = z.uuid();
 const runInput = z.strictObject({ projectId: slug, workflowId: slug, scenarioId: slug });
-const modelName = /^[A-Za-z0-9_.:/-]{1,100}$/;
 const artifacts = [
   'baseline.png',
   'variant.png',
@@ -74,11 +79,16 @@ export function createControlPlane(
     model?: string;
     store?: Persistence;
     targets?: TargetAuthority;
+    staticRepairs?: StaticRepairs;
   } = {},
 ) {
   const store: Persistence = options.store ?? new Store(root);
   const targets = options.targets ?? new TargetAuthority([]);
   const runner = new BrowserRunner();
+  const recorder = new Recorder();
+  const providers = configuredProviders(options.model);
+  const github = githubRepositories();
+  const staticRepairs = options.staticRepairs ?? new StaticRepairs();
   const app = express();
   const server = createServer(app);
   const socket = new Server(server, {
@@ -86,7 +96,8 @@ export function createControlPlane(
     serveClient: false,
     maxHttpBufferSize: 8192,
   });
-  const tasks: { run: Run; repair: boolean }[] = [];
+  type RepairJob = 'demo' | ReturnType<StaticRepairs['claim']>;
+  const tasks: { run: Run; repair?: RepairJob }[] = [];
   let busy = false;
   const save = async (run: Run) => {
     await store.saveRun(run);
@@ -138,7 +149,22 @@ export function createControlPlane(
           if (repair) {
             run.phase = 'Verifying reviewed patch';
             await save(run);
-            run.repair = await verifyRepair(run, runner, store.directory(run.id));
+            if (repair === 'demo') {
+              run.repair = await verifyRepair(run, runner, store.directory(run.id));
+            } else {
+              const catalog = await store.catalog();
+              const project = externalProject(catalog, run.project.id);
+              if (run.project.kind !== 'external' || project.url !== run.project.url)
+                throw new TargetError('The approved project origin changed');
+              await authorizedTarget(project, catalog);
+              const suite = catalog.workflows.filter(
+                (entry) => entry.projectId === project.id && entry.id !== run.workflow.id,
+              );
+              run.repair = await staticRepairs.verify(run, repair, runner, store.directory(run.id), [
+                run.workflow,
+                ...suite,
+              ]);
+            }
             run.phase = 'Complete';
           } else {
             run.status = 'running';
@@ -189,7 +215,7 @@ export function createControlPlane(
       busy = false;
     }
   }
-  async function enqueue(run: Run, repair: boolean) {
+  async function enqueue(run: Run, repair?: RepairJob) {
     if (tasks.length + Number(busy) >= 5) throw new ClientError(429, 'Execution queue is full');
     await save(run);
     tasks.push({ run, repair });
@@ -240,7 +266,10 @@ export function createControlPlane(
             ]
           : [],
       ),
-      ai: Boolean(options.model && modelName.test(options.model)),
+      ai: providers.size > 0,
+      providers: [...providers.keys()],
+      githubRepositories: github.list,
+      staticRepairProjects: [...staticRepairs.configured],
     });
   });
   app.put('/api/projects', async (req, res) => {
@@ -248,7 +277,11 @@ export function createControlPlane(
     if (project.kind === 'external') {
       if (projects.some(({ id }) => id === project.id))
         throw new ClientError(409, 'Choose a new ID for the external project');
-      project.url = externalOrigin(project.url);
+      project.url = targetOrigin(project.url);
+      const environment = project.url.startsWith('https:') ? 'staging' : 'local';
+      if (project.environment && project.environment !== environment)
+        throw new ClientError(400, 'Choose the environment that matches the approved origin');
+      project.environment = environment;
     }
     await serialize(async () => {
       const catalog = await store.catalog();
@@ -261,7 +294,70 @@ export function createControlPlane(
       if (catalog.projects.length > 30) throw new ClientError(409, 'Project limit reached');
       await store.saveCatalog(catalog);
     });
+    await recorder.closeProject(project.id);
     res.json(project);
+  });
+  app.delete('/api/projects/:id', async (req, res) => {
+    const id = slug.parse(req.params.id);
+    z.strictObject({ approved: z.literal(true) }).parse(req.body);
+    if (projects.some((project) => project.id === id))
+      throw new ClientError(409, 'The bundled project is required by the demo');
+    await serialize(async () => {
+      const catalog = await store.catalog();
+      if (!currentProject(catalog, id)) throw new ClientError(404, 'Project not found');
+      if (
+        (await store.runs()).some(
+          (run) =>
+            run.project.id === id &&
+            (['queued', 'running'].includes(run.status) ||
+              ['Repair queued', 'Verifying reviewed patch'].includes(run.phase)),
+        )
+      )
+        throw new ClientError(409, 'Wait for active experiments before deleting the project');
+      catalog.projects = catalog.projects.filter((project) => project.id !== id);
+      catalog.workflows = catalog.workflows.filter((entry) => entry.projectId !== id);
+      catalog.scenarios = catalog.scenarios.filter((entry) => entry.projectId !== id);
+      catalog.targetProofs = catalog.targetProofs.filter((entry) => entry.projectId !== id);
+      catalog.projectImports = catalog.projectImports.filter((entry) => entry.projectId !== id);
+      catalog.repositories = catalog.repositories.filter((entry) => entry.projectId !== id);
+      await store.saveCatalog(catalog);
+    });
+    await recorder.closeProject(id);
+    res.json({ deleted: id });
+  });
+  async function authorizedTarget(project: ExternalProject, catalog: Catalog) {
+    const proof = proofFor(catalog, project);
+    if (!proof || externalProject(catalog, project.id).url !== project.url) {
+      throw new TargetError('Verify this application before opening a browser session');
+    }
+    return targets.authorized(project.url, proof.token);
+  }
+  app.post('/api/projects/:id/connection', async (req, res) => {
+    const catalog = await store.catalog();
+    const project = externalProject(catalog, slug.parse(req.params.id));
+    await authorizedTarget(project, catalog);
+    res.json({ origin: project.url, status: 'verified', checkedAt: new Date().toISOString() });
+  });
+  app.put('/api/projects/:id/repository', async (req, res) => {
+    const projectId = slug.parse(req.params.id);
+    const { repository } = z.strictObject({ repository: repositorySlug }).parse(req.body);
+    if (!github.list.includes(repository))
+      throw new ClientError(403, 'This repository is not on the operator allowlist');
+    if (!currentProject(await store.catalog(), projectId))
+      throw new ClientError(404, 'Project not found');
+    const link = await github.connect(projectId, repository).catch(() => {
+      throw new ClientError(503, 'GitHub metadata verification failed');
+    });
+    await serialize(async () => {
+      const catalog = await store.catalog();
+      if (!currentProject(catalog, projectId)) throw new ClientError(404, 'Project not found');
+      catalog.repositories = [
+        ...catalog.repositories.filter((item) => item.projectId !== projectId),
+        link,
+      ];
+      await store.saveCatalog(catalog);
+    });
+    res.json(link);
   });
   app.post('/api/projects/:id/challenge', async (req, res) => {
     z.strictObject({ staging: z.literal(true) }).parse(req.body);
@@ -290,7 +386,34 @@ export function createControlPlane(
       catalog.targetProofs = catalog.targetProofs.filter((proof) => proof.projectId !== project.id);
       await store.saveCatalog(catalog);
     });
+    await recorder.closeProject(slug.parse(req.params.id));
     res.json({ revoked: true });
+  });
+  app.post('/api/recordings', async (req, res) => {
+    const { projectId, start } = z.strictObject({ projectId: slug, start: pagePath }).parse(req.body);
+    const recording = await serialize(async () => {
+      const catalog = await store.catalog();
+      const project = currentProject(catalog, projectId);
+      if (!project) throw new ClientError(404, 'Project not found');
+      const target = project.kind === 'external' ? await authorizedTarget(project, catalog) : undefined;
+      return recorder.open(project, start, target);
+    });
+    res.status(201).json(recording);
+  });
+  app.post('/api/recordings/:id/steps', async (req, res) => {
+    const id = runId.parse(req.params.id);
+    const action = recorderCommand.parse(req.body);
+    res.json(await serialize(() => recorder.perform(id, action)));
+  });
+  app.post('/api/recordings/:id/replay', async (req, res) => {
+    const id = runId.parse(req.params.id);
+    const workflow = workflowSchema.parse(req.body);
+    res.json(await serialize(() => recorder.replay(id, workflow)));
+  });
+  app.delete('/api/recordings/:id', async (req, res) => {
+    const id = runId.parse(req.params.id);
+    await serialize(() => recorder.close(id));
+    res.json({ closed: true });
   });
   app.put('/api/workflows', async (req, res) => {
     const workflow = workflowSchema.parse(req.body);
@@ -380,23 +503,25 @@ export function createControlPlane(
     });
     res.json(thresholds);
   });
-  app.get('/api/runs', async (_req, res) =>
+  app.get('/api/runs', async (req, res) => {
+    const { projectId } = z.object({ projectId: slug.optional() }).parse(req.query);
     res.json(
-      (await store.runs()).map(
-        ({ id, createdAt, phase, status, risk, project, workflow, scenario, findings }) => ({
+      (await store.runs())
+        .filter((run) => !projectId || run.project.id === projectId)
+        .map(({ id, createdAt, phase, status, risk, project, workflow, scenario, findings }) => ({
           id,
           createdAt,
           phase,
           status,
           risk,
           project: project.name,
+          projectId: project.id,
           workflow: workflow.name,
           scenario: scenario.name,
           findings: findings?.length ?? 0,
-        }),
-      ),
-    ),
-  );
+        })),
+    );
+  });
   app.post('/api/runs', async (req, res) => {
     const input = runInput.parse(req.body);
     const id = await serialize(async () => {
@@ -427,7 +552,16 @@ export function createControlPlane(
       ) {
         throw new ClientError(409, 'The scenario references an operation that is no longer registered');
       }
-      if ((await store.runs()).length >= 150)
+      const history = await store.runs();
+      const active = history.find(
+        (run) =>
+          ['queued', 'running'].includes(run.status) &&
+          run.project.id === input.projectId &&
+          run.workflow.id === input.workflowId &&
+          run.scenario.id === input.scenarioId,
+      );
+      if (active) return active.id;
+      if (history.length >= 150)
         throw new ClientError(409, 'This data store has reached its 150-run limit');
       const run: Run = {
         id: randomUUID(),
@@ -439,15 +573,28 @@ export function createControlPlane(
         scenario,
         thresholds: catalog.thresholds,
       };
-      await enqueue(run, false);
+      await enqueue(run);
       return run.id;
     });
     res.status(202).json({ id });
   });
   app.get('/api/runs/:id', async (req, res) => res.json(await requireRun(req.params.id)));
+  let printing = false;
   app.get('/api/runs/:id/report', async (req, res) => {
     const run = await requireRun(req.params.id);
-    res.attachment(`breaktrace-${run.id}.json`).json(run);
+    const format = z.enum(['json', 'html', 'pdf']).default('json').parse(req.query.format);
+    const name = `breaktrace-${run.id}.${format}`;
+    if (format === 'json') return res.attachment(name).json(run);
+    if (format === 'pdf' && printing) throw new ClientError(429, 'One PDF export is already running');
+    if (format === 'pdf') printing = true;
+    try {
+      const document = await renderReport(run, store.directory(run.id));
+      if (format === 'html') return res.attachment(name).type('html').send(document);
+      const pdf = await printReport(document);
+      return res.attachment(name).type('application/pdf').send(pdf);
+    } finally {
+      if (format === 'pdf') printing = false;
+    }
   });
   app.get('/api/runs/:id/artifact/:name', async (req, res) => {
     const run = await requireRun(req.params.id);
@@ -463,37 +610,72 @@ export function createControlPlane(
     if (req.query.download === '1') res.attachment(`breaktrace-${run.id}.spec.ts`);
     res.type('text/plain').send(generateRegression(run));
   });
+  app.get('/api/runs/:id/drafts/:kind', async (req, res) => {
+    const run = await requireRun(req.params.id);
+    const kind = z.enum(['issue', 'pull-request', 'workflow']).parse(req.params.kind);
+    if (!run.variant) throw new ClientError(409, 'Complete an experiment before drafting an export');
+    const link = (await store.catalog()).repositories.find(
+      (entry) => entry.projectId === run.project.id,
+    );
+    if (req.query.download === '1')
+      res.attachment(`breaktrace-${kind}.${kind === 'workflow' ? 'yml' : 'md'}`);
+    res.type('text/plain').send(repositoryDraft(run, kind, link));
+  });
   app.post('/api/runs/:id/repair', async (req, res) => {
-    z.strictObject({ approved: z.literal(true) }).parse(req.body);
+    const { reviewId } = z
+      .strictObject({ approved: z.literal(true), reviewId: z.uuid().optional() })
+      .parse(req.body);
     const id = await serialize(async () => {
       const run = await requireRun(req.params.id);
-      if (!canVerify(run) || run.phase !== 'Complete')
-        throw new ClientError(409, 'This run is unavailable for the reviewed pricing patch');
+      if (run.phase !== 'Complete' || (reviewId ? !staticRepairs.available(run) : !canVerify(run)))
+        throw new ClientError(409, 'This run is unavailable for the requested repair');
+      const candidate = reviewId ? staticRepairs.claim(run, reviewId) : 'demo';
       run.phase = 'Repair queued';
-      await enqueue(run, true);
+      await enqueue(run, candidate);
+      if (reviewId) staticRepairs.consume(reviewId);
       return run.id;
     });
     res.status(202).json({ id });
+  });
+  app.post('/api/runs/:id/repair/preview', async (req, res) => {
+    const run = await requireRun(req.params.id);
+    if (run.phase !== 'Complete' || !staticRepairs.available(run))
+      throw new ClientError(409, 'This run is unavailable for static repair review');
+    const { changes } = repairChanges.parse(req.body);
+    const catalog = await store.catalog();
+    const project = externalProject(catalog, run.project.id);
+    if (run.project.kind !== 'external' || project.url !== run.project.url)
+      throw new ClientError(409, 'The approved project origin changed');
+    await authorizedTarget(project, catalog);
+    res.json(await staticRepairs.preview(run, changes));
   });
   app.get('/api/runs/:id/analysis', async (req, res) => {
     const run = await requireRun(req.params.id);
     res.json({
       source: 'Deterministic rules',
       text: recommendations(run),
-      repairAvailable: canVerify(run),
+      repairAvailable: canVerify(run) || staticRepairs.available(run),
     });
   });
   let aiBusy = false;
   app.post('/api/runs/:id/analysis', async (req, res) => {
     const run = await requireRun(req.params.id);
-    if (!options.model || !modelName.test(options.model))
-      throw new ClientError(409, 'No local Ollama model configured');
-    if (aiBusy) throw new ClientError(429, 'A local analysis is already running');
+    const { provider } = z
+      .strictObject({ provider: z.enum(['ollama', 'gemini', 'openai']).optional() })
+      .parse(req.body ?? {});
+    const selected = provider ? providers.get(provider) : providers.values().next().value;
+    if (!selected) throw new ClientError(409, 'The selected model provider is not configured');
+    if (!run.variant || ['running', 'queued'].includes(run.status))
+      throw new ClientError(409, 'Complete an experiment before requesting AI analysis');
+    if (aiBusy) throw new ClientError(429, 'An AI analysis is already running');
     aiBusy = true;
     try {
-      res.json(await optionalOllama(options.model).describe(run));
+      res.json(await selected.describe(run));
     } catch {
-      throw new ClientError(503, 'Local model unavailable. Deterministic analysis remains available.');
+      throw new ClientError(
+        503,
+        'The selected model is unavailable. Deterministic analysis remains available.',
+      );
     } finally {
       aiBusy = false;
     }
@@ -549,6 +731,7 @@ export function createControlPlane(
     server,
     ready,
     close: async () => {
+      await recorder.close();
       await runner.close();
       await socket.close();
       await store.close?.();

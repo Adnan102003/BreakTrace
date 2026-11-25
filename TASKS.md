@@ -51,3 +51,7 @@ The final Windows run passed type checking, the production build, lint, 20 Vites
 - [x] Configured the local API to use its installed Chromium cache through `PLAYWRIGHT_BROWSERS_PATH` in the root `.env` and confirmed the API watcher restarted.
 - [x] Clicked Run demo experiment on the live dashboard. Run `4a6a226b-ab0f-4a15-85b1-d2c5f698aa2b` returned HTTP 202, finished with a clean baseline and two expected findings, and isolated the price rename. Its risk score was 80 with a BLOCK gate. The screenshot, generated spec, and report endpoints returned HTTP 200.
 - [x] Passed type checking, lint, 19 Vitest tests, and all six Playwright tests. The optional MongoDB test was skipped for this proxy check. The Vite regression test covered live updates, a real demo run, screenshots, reviewed repair verification, settings saves, OpenAPI import, and rejected cross-origin writes.
+
+## V2 development
+
+See [V2_TASKS.md](V2_TASKS.md) for the requirements audit, implementation evidence and open verification items. V2 extends the original demo with allowlisted local projects, browser workflow recording, visual rules, captured response previews, report exports, repository drafts and approved static-snapshot repair.

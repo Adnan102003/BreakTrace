@@ -66,6 +66,30 @@ test('the Vite proxy preserves workspace authorization for dashboard actions', a
     await page.getByRole('button', { name: 'Verify repair' }).click();
     await expect(page.getByText('Original source preserved')).toBeVisible({ timeout: 35_000 });
     expect(((await (await page.request.get(reportUrl)).json()) as Run).repair?.passed).toBe(true);
+    const html = await page.request.get(`${reportUrl}/report?format=html`);
+    expect(html.status()).toBe(200);
+    expect(html.headers()['content-type']).toContain('text/html');
+    const reportText = await html.text();
+    expect(reportText).toContain('Cart total matches independent checkout quote');
+    expect(reportText).toContain('Original source preserved');
+    expect(reportText).toContain('data:image/png;base64,');
+    const pdf = await page.request.get(`${reportUrl}/report?format=pdf`);
+    expect(pdf.status()).toBe(200);
+    expect(pdf.headers()['content-type']).toContain('application/pdf');
+    expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-');
+    await page.getByRole('link', { name: 'Deployment risk' }).click();
+    await expect(page.getByRole('progressbar', { name: 'Evidence risk score' })).toHaveAttribute(
+      'data-gate',
+      'BLOCK',
+    );
+
+    await page.getByRole('link', { name: 'Regression tests' }).click();
+    await page.getByRole('button', { name: 'Preview draft' }).click();
+    await expect(page.getByText(/## Observed evidence/)).toContainText(id);
+    await page.getByLabel('Draft type').selectOption('workflow');
+    await expect(page.getByText(/name: BreakTrace evidence gate/)).toContainText('npm run gate');
+    const ci = await page.request.get(`${reportUrl}/drafts/workflow?download=1`);
+    expect(ci.headers()['content-disposition']).toContain('breaktrace-workflow.yml');
 
     await page.getByRole('link', { name: 'Settings & docs' }).click();
     await page.getByLabel('Warning threshold').fill('30');
@@ -79,6 +103,26 @@ test('the Vite proxy preserves workspace authorization for dashboard actions', a
       .fill('{"openapi":"3.1.0","paths":{"/items":{"get":{"summary":"Items"}}}}');
     await page.getByRole('button', { name: 'Import operations' }).click();
     await expect(page.getByText('GET /items', { exact: true })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Workflows' }).click();
+    await page.getByRole('button', { name: 'New workflow' }).click();
+    await page
+      .getByLabel('Workflow JSON')
+      .fill(
+        JSON.stringify({
+          id: 'visual-rule',
+          name: 'Visual rule verification',
+          start: '/',
+          steps: [{ action: 'visible', target: 'page-title' }],
+        }),
+      );
+    await page.getByText('Open visual rule builder').click();
+    await page.getByLabel('Rule name').fill('Five free seats');
+    await page.getByLabel('Element test ID').fill('free-seats');
+    await page.getByRole('button', { name: 'Add rule to workflow' }).click();
+    await expect(page.getByText('Rule added to the workflow draft.')).toBeVisible();
+    await page.getByRole('button', { name: 'Save workflow' }).click();
+    await expect(page.getByRole('button', { name: /Visual rule verification/ })).toBeVisible();
 
     const foreignPort = await page.request.put(`${origin}/api/settings/gate`, {
       headers: { Origin: `http://127.0.0.1:${api.port}`, 'Sec-Fetch-Site': 'same-site' },

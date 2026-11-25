@@ -13,6 +13,7 @@ import type {
 } from '../../packages/shared/contracts';
 import { projects, scenarios, thresholds, workflows } from '../../packages/shared/demo';
 import type { TargetProof } from './targets';
+import type { RepositoryLink } from './repositories';
 
 export type Catalog = {
   projects: Project[];
@@ -22,6 +23,7 @@ export type Catalog = {
   thresholds: Gate;
   targetProofs: TargetProof[];
   projectImports: { projectId: string; operations: ApiOperation[] }[];
+  repositories: RepositoryLink[];
 };
 export const defaults = (): Catalog =>
   structuredClone({
@@ -32,6 +34,7 @@ export const defaults = (): Catalog =>
     thresholds,
     targetProofs: [],
     projectImports: [],
+    repositories: [],
   });
 
 type Stored<T> = T | Promise<T>;

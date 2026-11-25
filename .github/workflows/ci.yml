@@ -33,6 +33,7 @@ jobs:
           BREAKTRACE_TEST_MONGO_URI: mongodb://127.0.0.1:${{ job.services.mongo.ports['27017'] }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npm run benchmark:rooms -- .data/ci-rooms
       - run: npm run smoke -- .data/ci
       - name: Validate report quality gates
         run: |

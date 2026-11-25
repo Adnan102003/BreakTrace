@@ -90,15 +90,17 @@ const copy: Record<string, string> = {
   analysis: 'Explore likely causes from the observed failure evidence.',
   experiments: 'Review the trials behind the isolated failure-inducing subset.',
   regression: 'Export browser assertions for a reproducible scenario.',
-  repair: 'Compare a reviewed patch in the synthetic storefront.',
+  repair: 'Review a change and compare the original and repaired browser behavior.',
   risk: 'Review the run evidence behind the release gate.',
   settings: 'Configure local quality thresholds and learn how the lab works.',
 };
 const getRoute = () => {
-  const [tab = 'overview', id] = window.location.hash.slice(2).split('/');
+  const [path, search] = window.location.hash.slice(2).split('?');
+  const [tab = 'overview', id] = path.split('/');
   return {
     tab: pages.some((page) => page.id === tab) ? tab : 'overview',
     id: /^[a-f0-9-]{36}$/.test(id ?? '') ? id : undefined,
+    project: new URLSearchParams(search).get('project') ?? '',
   };
 };
 const runPages = [
@@ -118,12 +120,18 @@ function LaunchForm({
   catalog,
   busy,
   execute,
+  initialProject,
 }: {
   catalog: Catalog;
   busy: boolean;
   execute: (data: { projectId: string; workflowId: string; scenarioId: string }) => void;
+  initialProject?: string;
 }) {
-  const [projectId, setProjectId] = useState('fieldwork-shop');
+  const [projectId, setProjectId] = useState(
+    catalog.projects.some((project) => project.id === initialProject)
+      ? initialProject!
+      : 'fieldwork-shop',
+  );
   const project = catalog.projects.find((item) => item.id === projectId);
   const scope = project?.kind === 'external' ? project.id : undefined;
   const workflows = catalog.workflows.filter((item) => item.projectId === scope);
@@ -295,6 +303,7 @@ function SettingsView({ catalog }: { catalog: Catalog }) {
 
 function App() {
   const [route, setRoute] = useState(getRoute);
+  const [runStatus, setRunStatus] = useState('');
   const [menu, setMenu] = useState(false);
   useEffect(() => {
     if (!menu) return;
@@ -398,7 +407,14 @@ function App() {
   else if (catalog) {
     switch (route.tab) {
       case 'overview':
-        body = <Overview runs={runs} runDemo={launchDemo} busy={execute.isPending} />;
+        body = (
+          <Overview
+            runs={runs}
+            projects={catalog.projects}
+            runDemo={launchDemo}
+            busy={execute.isPending}
+          />
+        );
         break;
       case 'projects':
         body = <Projects catalog={catalog} />;
@@ -407,7 +423,7 @@ function App() {
         body = <Workflows catalog={catalog} />;
         break;
       case 'scenarios':
-        body = <Scenarios catalog={catalog} />;
+        body = <Scenarios catalog={catalog} runs={runs} />;
         break;
       case 'api':
         body = <Explorer catalog={catalog} run={run} runs={runs} />;
@@ -418,7 +434,13 @@ function App() {
       case 'runs':
         body = (
           <div className="stack">
-            <LaunchForm catalog={catalog} busy={execute.isPending} execute={execute.mutate} />
+            <LaunchForm
+              key={route.project}
+              catalog={catalog}
+              initialProject={route.project}
+              busy={execute.isPending}
+              execute={execute.mutate}
+            />
             {detail.error && <ErrorMessage error={detail.error} />}
             {run && (
               <Panel
@@ -437,11 +459,64 @@ function App() {
                     </a>
                   )}
                 </div>
+                {['queued', 'running'].includes(run.status) && (
+                  <progress
+                    aria-label="Execution progress"
+                    max={4}
+                    value={
+                      (
+                        {
+                          'Recording baseline': 1,
+                          'Applying response mutations': 2,
+                          'Isolating the failure': 3,
+                        } as Record<string, number>
+                      )[run.phase] ?? 0
+                    }
+                  />
+                )}
                 {run.error && <ErrorMessage error={run.error} />}
               </Panel>
             )}
             <Panel title="Execution history">
-              <RunTable rows={runs} />
+              <div className="field-grid">
+                <label>
+                  Filter by project
+                  <select
+                    value={route.project}
+                    onChange={(event) => {
+                      window.location.hash = `${href('runs')}${event.target.value ? `?project=${event.target.value}` : ''}`;
+                    }}
+                  >
+                    <option value="">All projects</option>
+                    {[
+                      ...new Map([
+                        ...catalog.projects.map((project) => [project.id, project.name] as const),
+                        ...runs.map((item) => [item.projectId, item.project] as const),
+                      ]),
+                    ].map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Filter by status
+                  <select value={runStatus} onChange={(event) => setRunStatus(event.target.value)}>
+                    <option value="">All statuses</option>
+                    {['queued', 'running', 'passed', 'failed', 'inconclusive', 'error'].map((status) => (
+                      <option key={status}>{status}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <RunTable
+                rows={runs.filter(
+                  (item) =>
+                    (!route.project || item.projectId === route.project) &&
+                    (!runStatus || item.status === runStatus),
+                )}
+              />
             </Panel>
           </div>
         );
@@ -453,9 +528,17 @@ function App() {
         else if (route.tab === 'graph') body = <DependencyGraph key={run.id} run={run} />;
         else if (route.tab === 'failures') body = <FailureDetails run={run} />;
         else if (route.tab === 'experiments') body = <Experiments run={run} />;
-        else if (route.tab === 'analysis') body = <RootCause key={run.id} run={run} ai={catalog.ai} />;
+        else if (route.tab === 'analysis')
+          body = <RootCause key={run.id} run={run} providers={catalog.providers ?? []} />;
         else if (route.tab === 'regression') body = <Regression run={run} />;
-        else if (route.tab === 'repair') body = <Repair key={run.id} run={run} />;
+        else if (route.tab === 'repair')
+          body = (
+            <Repair
+              key={run.id}
+              run={run}
+              staticEnabled={catalog.staticRepairProjects.includes(run.project.id)}
+            />
+          );
         else if (route.tab === 'risk') body = <DeploymentRisk run={run} />;
     }
   }

@@ -508,6 +508,10 @@ main {
   background: var(--red-wash);
   color: var(--red);
 }
+.amber {
+  background: color-mix(in srgb, var(--warn) 15%, var(--panel));
+  color: var(--warn);
+}
 .blue {
   background: var(--blue-wash);
   color: var(--blue);
@@ -736,6 +740,9 @@ input[type='checkbox'] {
 .actions {
   flex-wrap: wrap;
 }
+.dashboard-filter {
+  justify-content: flex-end;
+}
 .mutation-editor {
   border: 1px solid var(--border);
   padding: 12px;
@@ -884,6 +891,15 @@ input[type='checkbox'] {
   margin: 10px 0;
   accent-color: var(--accent);
 }
+.panel progress[data-gate='PASS'] {
+  accent-color: var(--green);
+}
+.panel progress[data-gate='WARNING'] {
+  accent-color: var(--warn);
+}
+.panel progress[data-gate='BLOCK'] {
+  accent-color: var(--red);
+}
 .panel progress ~ a {
   margin-top: 13px;
 }
@@ -1027,4 +1043,17 @@ input[type='checkbox'] {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+.recorder-preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  cursor: crosshair;
+  max-width: 100%;
+}
+.recorder-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
 }

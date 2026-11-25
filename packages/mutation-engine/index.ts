@@ -114,6 +114,33 @@ export function responseShape(body: unknown): Shape {
   return entries;
 }
 
+const secretKey = /password|passwd|secret|token|api.?key|authoriz|cookie|credential|session|signature/i;
+export function responseSample(
+  value: unknown,
+  depth = 0,
+  budget = { remaining: 100 },
+): import('../shared/contracts').JsonValue {
+  if (depth > 5 || budget.remaining-- <= 0) return '[truncated]';
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return '[text redacted]';
+  if (Array.isArray(value))
+    return value.slice(0, 2).map((item) => responseSample(item, depth + 1, budget));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 16)
+        .filter(([key]) => safeKey(key) && /^[A-Za-z_][\w-]{0,50}$/.test(key) && !secretKey.test(key))
+        .map(([key, item]) => [key, responseSample(item, depth + 1, budget)]),
+    );
+  return null;
+}
+
+export function responseField(body: unknown, path: string): unknown {
+  if (path.split('.').some((part) => secretKey.test(part))) return undefined;
+  const match = findField(body, path);
+  return match?.parent[match.key];
+}
+
 type NetworkEvent = {
   method: string;
   path: string;
@@ -122,6 +149,7 @@ type NetworkEvent = {
   durationMs: number;
   shape: Shape;
   applied: number[];
+  data?: unknown;
 };
 export type ExternalTransport = {
   origin: string;
@@ -155,7 +183,9 @@ export async function installInterception(
   const base = new URL(origin);
   if (
     external
-      ? base.protocol !== 'https:' || external.origin !== origin
+      ? (base.protocol !== 'https:' &&
+          !(base.protocol === 'http:' && base.hostname === '127.0.0.1' && base.port)) ||
+        external.origin !== origin
       : base.protocol !== 'http:' ||
         base.hostname !== '127.0.0.1' ||
         !base.port ||
@@ -191,6 +221,7 @@ export async function installInterception(
     let status: number | null = null;
     let shape: Shape = {};
     let applied: number[] = [];
+    let data: unknown;
     try {
       const remote = external
         ? await external.read(url, method as 'GET' | 'HEAD', request.headers().accept)
@@ -245,13 +276,17 @@ export async function installInterception(
           });
         } else if (output.applied.length) {
           shape = responseShape(output.json);
+          data = output.json;
           await route.fulfill({
             status: output.status,
             contentType,
             body: JSON.stringify(output.json) ?? '',
           });
         } else {
-          if (payload !== undefined) shape = responseShape(payload);
+          if (payload !== undefined) {
+            shape = responseShape(payload);
+            data = payload;
+          }
           await forward();
         }
       }
@@ -275,6 +310,7 @@ export async function installInterception(
           shape,
           durationMs: Math.round(performance.now() - start),
           applied,
+          data,
         });
       }
     }

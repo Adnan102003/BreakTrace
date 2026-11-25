@@ -1,0 +1,56 @@
+{
+  "fixture": "Room Board",
+  "executed": 4,
+  "results": [
+    {
+      "id": "baseline",
+      "expected": "passed",
+      "observed": "passed",
+      "verified": true,
+      "findings": [],
+      "isolation": null
+    },
+    {
+      "id": "capacity-renamed",
+      "expected": "failed",
+      "observed": "failed",
+      "verified": true,
+      "findings": [
+        "rule:reference",
+        "rule:capacity-required",
+        "rule:valid-availability",
+        "rule:arithmetic"
+      ],
+      "isolation": {
+        "status": "verified",
+        "indices": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "reserved-negative",
+      "expected": "failed",
+      "observed": "failed",
+      "verified": true,
+      "findings": [
+        "rule:reference",
+        "rule:valid-availability"
+      ],
+      "isolation": {
+        "status": "verified",
+        "indices": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "room-label-removed",
+      "expected": "passed",
+      "observed": "passed",
+      "verified": true,
+      "findings": [],
+      "isolation": null
+    }
+  ]
+}

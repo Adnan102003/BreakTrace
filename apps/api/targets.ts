@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { request as requestHttp } from 'node:http';
 import { request } from 'node:https';
 import { isIP } from 'node:net';
 import { checkServerIdentity } from 'node:tls';
@@ -45,6 +46,17 @@ export function externalOrigin(value: string) {
   return url.origin;
 }
 
+export function localTargetOrigin(value: string) {
+  const match = /^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})\/?$/.exec(value);
+  if (!match || Number(match[1]) < 1024 || Number(match[1]) > 65535) {
+    throw new TargetError('Use an explicit HTTP origin on 127.0.0.1 with a non-privileged port');
+  }
+  return `http://127.0.0.1:${match[1]}`;
+}
+
+export const targetOrigin = (value: string) =>
+  value.startsWith('http:') ? localTargetOrigin(value) : externalOrigin(value);
+
 export function publicAddress(address: string) {
   try {
     const parsed = ipaddr.process(address);
@@ -56,20 +68,27 @@ export function publicAddress(address: string) {
   }
 }
 
-function requestPinned(
+export function requestPinned(
   url: URL,
   address: string,
   method: 'GET' | 'HEAD',
   accept?: string,
 ): Promise<TargetResponse> {
   return new Promise((resolve, reject) => {
-    const req = request(
+    const secure = url.protocol === 'https:';
+    const send = secure ? request : requestHttp;
+    const req = send(
       {
         host: address,
-        port: 443,
-        servername: url.hostname,
-        checkServerIdentity: (_host, cert) => checkServerIdentity(url.hostname, cert),
-        rejectUnauthorized: true,
+        port: secure ? 443 : Number(url.port),
+        ...(secure
+          ? {
+              servername: url.hostname,
+              checkServerIdentity: (_host: string, cert: Parameters<typeof checkServerIdentity>[1]) =>
+                checkServerIdentity(url.hostname, cert),
+              rejectUnauthorized: true,
+            }
+          : {}),
         agent: false,
         method,
         path: url.pathname + url.search,
@@ -126,6 +145,7 @@ const proofText = (token: string) => `breaktrace:${token}`;
 
 export class TargetAuthority {
   private readonly allowed: Set<string>;
+  private readonly localAllowed: Set<string>;
   private readonly challenges = new Map<string, { origin: string; token: string; expiresAt: number }>();
 
   constructor(
@@ -133,17 +153,21 @@ export class TargetAuthority {
     private readonly resolve: (name: string) => Promise<Address[]> = (name) =>
       lookup(name, { all: true }),
     private readonly send: RequestTarget = requestPinned,
+    localOrigins: string[] = [],
   ) {
     this.allowed = new Set(origins.map(externalOrigin));
+    this.localAllowed = new Set(localOrigins.map(localTargetOrigin));
   }
 
   includes(origin: string) {
-    return this.allowed.has(origin);
+    return this.allowed.has(origin) || this.localAllowed.has(origin);
   }
 
   issue(projectId: string, origin: string) {
     if (!this.includes(origin))
-      throw new TargetError('Add this origin to BREAKTRACE_ALLOWED_ORIGINS on the operator machine');
+      throw new TargetError(
+        'Add this origin to the staging or local target allowlist on the operator machine',
+      );
     const token = randomBytes(32).toString('hex');
     const expiresAt = Date.now() + 15 * 60_000;
     this.challenges.set(projectId, { origin, token, expiresAt });
@@ -160,9 +184,10 @@ export class TargetAuthority {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const hostname = new URL(origin).hostname;
     let answers: Address[];
+    const local = this.localAllowed.has(origin);
     try {
       answers = await Promise.race([
-        this.resolve(hostname),
+        local ? Promise.resolve([{ address: '127.0.0.1', family: 4 }]) : this.resolve(hostname),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(new TargetError('Target DNS lookup timed out')), 3500);
         }),
@@ -172,7 +197,7 @@ export class TargetAuthority {
     } finally {
       if (timer) clearTimeout(timer);
     }
-    if (!answers.length || answers.some((answer) => !publicAddress(answer.address))) {
+    if (!answers.length || (!local && answers.some((answer) => !publicAddress(answer.address)))) {
       throw new TargetError('Target DNS must resolve exclusively to public addresses');
     }
     const address = (answers.find((answer) => answer.family === 4) ?? answers[0]).address;
@@ -202,7 +227,7 @@ export class TargetAuthority {
     try {
       response = await target.read(new URL(verifyPath(token), target.origin), 'GET', 'text/plain');
     } catch {
-      throw new TargetError('The target proof could not be fetched directly over HTTPS');
+      throw new TargetError('The target proof could not be fetched directly from the approved origin');
     }
     const expected = Buffer.from(proofText(token));
     const actual = Buffer.from(response.body.toString('utf8').trim());
