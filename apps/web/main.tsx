@@ -123,6 +123,13 @@ function LaunchForm({
   busy: boolean;
   execute: (data: { projectId: string; workflowId: string; scenarioId: string }) => void;
 }) {
+  const [projectId, setProjectId] = useState('fieldwork-shop');
+  const project = catalog.projects.find((item) => item.id === projectId);
+  const scope = project?.kind === 'external' ? project.id : undefined;
+  const workflows = catalog.workflows.filter((item) => item.projectId === scope);
+  const scenarios = catalog.scenarios.filter((item) => item.projectId === scope);
+  const auth = catalog.authorization.find((entry) => entry.projectId === projectId);
+  const authorized = !scope || Boolean(auth?.allowlisted && auth.verifiedAt);
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -140,7 +147,11 @@ function LaunchForm({
       <form className="run-form" onSubmit={submit}>
         <label>
           Project
-          <select name="project" defaultValue="fieldwork-shop">
+          <select
+            name="project"
+            value={projectId}
+            onChange={(event) => setProjectId(event.target.value)}
+          >
             {catalog.projects.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
@@ -150,8 +161,14 @@ function LaunchForm({
         </label>
         <label>
           Workflow
-          <select name="workflow" defaultValue="checkout">
-            {catalog.workflows.map((item) => (
+          <select
+            key={`${projectId}:workflow`}
+            name="workflow"
+            defaultValue={scope ? workflows[0]?.id : 'checkout'}
+            required
+          >
+            {!workflows.length && <option value="">No workflows for this project</option>}
+            {workflows.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
@@ -160,18 +177,49 @@ function LaunchForm({
         </label>
         <label>
           Scenario
-          <select name="scenario" defaultValue="multi-field-drift">
-            {catalog.scenarios.map((item) => (
+          <select
+            key={`${projectId}:scenario`}
+            name="scenario"
+            defaultValue={scope ? scenarios[0]?.id : 'multi-field-drift'}
+            required
+          >
+            {!scenarios.length && <option value="">No scenarios for this project</option>}
+            {scenarios.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
             ))}
           </select>
         </label>
-        <button className="button primary" disabled={busy}>
+        <button
+          className="button primary"
+          disabled={busy || !authorized || !workflows.length || !scenarios.length}
+        >
           <Play size={15} fill="currentColor" /> {busy ? 'Queuing…' : 'Start execution'}
         </button>
       </form>
+      {scope && !authorized && (
+        <p className="message">
+          Verify this staging origin in{' '}
+          <a className="table-link" href={href('projects')}>
+            Projects
+          </a>{' '}
+          before running a workflow.
+        </p>
+      )}
+      {scope && (!workflows.length || !scenarios.length) && (
+        <p className="message">
+          Add a project-scoped{' '}
+          <a className="table-link" href={href('workflows')}>
+            workflow
+          </a>{' '}
+          and{' '}
+          <a className="table-link" href={href('scenarios')}>
+            scenario
+          </a>
+          .
+        </p>
+      )}
     </Panel>
   );
 }
@@ -220,7 +268,10 @@ function SettingsView({ catalog }: { catalog: Catalog }) {
           {action.feedback}
         </form>
       </Panel>
-      <Panel title="Workspace documentation" description="BreakTrace runs locally with synthetic data.">
+      <Panel
+        title="Workspace documentation"
+        description={`Local workspace · ${catalog.storage === 'mongo' ? 'MongoDB' : 'JSON'} storage`}
+      >
         <ol className="docs-list">
           <li>In Test executions, select a fixture version, workflow and mutation scenario.</li>
           <li>Use Failure details and Dependency graph to inspect the new findings.</li>
@@ -245,6 +296,28 @@ function SettingsView({ catalog }: { catalog: Catalog }) {
 function App() {
   const [route, setRoute] = useState(getRoute);
   const [menu, setMenu] = useState(false);
+  useEffect(() => {
+    if (!menu) return;
+    const toggle = document.getElementById('workspace-menu');
+    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('#workspace-sidebar a'));
+    links[0]?.focus();
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMenu(false);
+        toggle?.focus();
+      }
+      if (event.key !== 'Tab' || !links.length) return;
+      if (event.shiftKey && document.activeElement === links[0]) {
+        event.preventDefault();
+        links.at(-1)?.focus();
+      } else if (!event.shiftKey && document.activeElement === links.at(-1)) {
+        event.preventDefault();
+        links[0].focus();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menu]);
   const [connected, setConnected] = useState(false);
   const [theme, setTheme] = useState(() =>
     localStorage.getItem('breaktrace-theme') === 'light' ? 'light' : 'dark',
@@ -402,11 +475,14 @@ function App() {
         <button
           type="button"
           className="veil"
-          onClick={() => setMenu(false)}
+          onClick={() => {
+            setMenu(false);
+            document.getElementById('workspace-menu')?.focus();
+          }}
           aria-label="Close navigation"
         />
       )}
-      <aside className={`sidebar ${menu ? 'open' : ''}`}>
+      <aside id="workspace-sidebar" className={`sidebar ${menu ? 'open' : ''}`}>
         <a className="brand" href={href('welcome')}>
           <span className="brand-icon">
             <ScanLine size={23} strokeWidth={2.1} />
@@ -422,7 +498,11 @@ function App() {
           </span>
           <div>
             <strong>Local workspace</strong>
-            <small>Fieldwork sandbox</small>
+            <small>
+              {catalog?.projects.some((project) => project.kind === 'external')
+                ? 'Demo and staging targets'
+                : 'Fieldwork sandbox'}
+            </small>
           </div>
         </div>
         <nav aria-label="Workspace navigation">
@@ -444,7 +524,11 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <a href={href('settings')} className={route.tab === 'settings' ? 'active' : ''}>
+          <a
+            href={href('settings')}
+            aria-current={route.tab === 'settings' ? 'page' : undefined}
+            className={route.tab === 'settings' ? 'active' : ''}
+          >
             <Settings size={16} /> Settings & docs
           </a>
         </div>
@@ -453,6 +537,8 @@ function App() {
         <header className="topbar">
           <div className="breadcrumbs">
             <button
+              id="workspace-menu"
+              aria-controls="workspace-sidebar"
               className="icon-btn menu-btn"
               aria-label={menu ? 'Close navigation' : 'Open navigation'}
               aria-expanded={menu}

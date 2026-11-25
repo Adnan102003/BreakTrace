@@ -1,12 +1,13 @@
 import type { Rule, RuleResult } from '../shared/contracts';
 
-type Value = { from: 'dom'; key: string } | { from: 'literal'; value: number };
+type Value =
+  { from: 'dom'; key: string; read?: 'data-value' | 'text' } | { from: 'literal'; value: number };
 export async function evaluate(
   rule: Rule,
-  lookup: (key: string) => Promise<number | null>,
+  lookup: (key: string, read?: 'data-value' | 'text') => Promise<number | null>,
 ): Promise<RuleResult> {
   const resolve = (value: Value) =>
-    value.from === 'literal' ? Promise.resolve(value.value) : lookup(value.key);
+    value.from === 'literal' ? Promise.resolve(value.value) : lookup(value.key, value.read);
   const result = (actual: number | null, expected: string, passed: boolean) => ({
     id: rule.id,
     name: rule.name,

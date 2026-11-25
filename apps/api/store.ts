@@ -1,5 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { setTimeout as pause } from 'node:timers/promises';
 import type {
   ApiOperation,
   Gate,
@@ -9,18 +12,42 @@ import type {
   Workflow,
 } from '../../packages/shared/contracts';
 import { projects, scenarios, thresholds, workflows } from '../../packages/shared/demo';
+import type { TargetProof } from './targets';
 
-type Catalog = {
+export type Catalog = {
   projects: Project[];
   scenarios: Scenario[];
   workflows: Workflow[];
   imported: ApiOperation[];
   thresholds: Gate;
+  targetProofs: TargetProof[];
+  projectImports: { projectId: string; operations: ApiOperation[] }[];
 };
-const defaults = (): Catalog =>
-  structuredClone({ projects, scenarios, workflows, imported: [], thresholds });
+export const defaults = (): Catalog =>
+  structuredClone({
+    projects,
+    scenarios,
+    workflows,
+    imported: [],
+    thresholds,
+    targetProofs: [],
+    projectImports: [],
+  });
 
-export class Store {
+type Stored<T> = T | Promise<T>;
+export interface Persistence {
+  readonly mode: 'json' | 'mongo';
+  catalog(): Stored<Catalog>;
+  saveCatalog(catalog: Catalog): Stored<void>;
+  runs(): Stored<Run[]>;
+  directory(id: string): string;
+  getRun(id: string): Stored<Run | undefined>;
+  saveRun(run: Run): Stored<void>;
+  close?(): Promise<void>;
+}
+
+export class Store implements Persistence {
+  readonly mode = 'json' as const;
   readonly root: string;
   constructor(root: string) {
     this.root = resolve(root);
@@ -29,16 +56,32 @@ export class Store {
   private read<T>(file: string): T {
     return JSON.parse(readFileSync(file, 'utf8')) as T;
   }
-  private write(file: string, data: unknown) {
-    writeFileSync(file + '.tmp', JSON.stringify(data, null, 2));
-    renameSync(file + '.tmp', file);
+  private async write(file: string, data: unknown) {
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(data, null, 2), { flag: 'wx' });
+    const retryDelays = [25, 75, 150, 300, 600, 1200];
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await rename(temporary, file);
+          return;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (attempt >= retryDelays.length || !['EPERM', 'EBUSY', 'EACCES'].includes(code ?? ''))
+            throw error;
+          await pause(retryDelays[attempt]);
+        }
+      }
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
   }
   catalog(): Catalog {
     const target = join(this.root, 'catalog.json');
-    return existsSync(target) ? this.read<Catalog>(target) : defaults();
+    return existsSync(target) ? { ...defaults(), ...this.read<Catalog>(target) } : defaults();
   }
   saveCatalog(catalog: Catalog) {
-    this.write(join(this.root, 'catalog.json'), catalog);
+    return this.write(join(this.root, 'catalog.json'), catalog);
   }
   runs() {
     return readdirSync(this.root)
@@ -57,6 +100,6 @@ export class Store {
   saveRun(run: Run) {
     const directory = this.directory(run.id);
     mkdirSync(directory, { recursive: true });
-    this.write(join(directory, 'run.json'), run);
+    return this.write(join(directory, 'run.json'), run);
   }
 }

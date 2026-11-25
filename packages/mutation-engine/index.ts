@@ -1,4 +1,5 @@
 import type { BrowserContext, Route } from 'playwright';
+import { matchOperation, type ApiOperation } from '../shared/contracts';
 import { safeKey, type Mutation, type Shape } from '../shared/contracts';
 
 function randomNumber(seed: number, index: number) {
@@ -122,6 +123,19 @@ type NetworkEvent = {
   shape: Shape;
   applied: number[];
 };
+export type ExternalTransport = {
+  origin: string;
+  operations: ApiOperation[];
+  read: (
+    url: URL,
+    method: 'GET' | 'HEAD',
+    accept?: string,
+  ) => Promise<{
+    status: number;
+    headers: Record<string, string>;
+    body: Buffer;
+  }>;
+};
 
 function targetUrl(origin: string, raw: string) {
   const url = new URL(raw);
@@ -136,37 +150,79 @@ export async function installInterception(
   seed: number,
   record: (event: NetworkEvent) => void = () => {},
   activeIndices = mutations.map((_, index) => index),
+  external?: ExternalTransport,
 ) {
   const base = new URL(origin);
-  if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || !base.port || base.origin !== origin)
+  if (
+    external
+      ? base.protocol !== 'https:' || external.origin !== origin
+      : base.protocol !== 'http:' ||
+        base.hostname !== '127.0.0.1' ||
+        !base.port ||
+        base.origin !== origin
+  )
     throw new Error('A pinned IPv4 loopback origin is required');
   await context.routeWebSocket('**/*', (socket) => socket.close());
+  let requests = 0;
+  let concurrent = 0;
+  let received = 0;
   await context.route('**/*', async (route: Route) => {
     const request = route.request();
     const url = targetUrl(origin, request.url());
-    if (!url || !['GET', 'POST'].includes(request.method())) return route.abort('blockedbyclient');
-    const isApi = url.pathname.startsWith('/api/store/');
+    const method = request.method();
+    if (!url || !(external ? ['GET', 'HEAD'] : ['GET', 'POST']).includes(method)) {
+      return route.abort('blockedbyclient');
+    }
+    const operation = external && matchOperation(external.operations, method, url.pathname);
+    if (
+      external &&
+      ((!operation && ['xhr', 'fetch', 'eventsource'].includes(request.resourceType())) ||
+        requests >= 180 ||
+        concurrent >= 16 ||
+        received >= 32 * 1024 * 1024)
+    ) {
+      return route.abort('blockedbyclient');
+    }
+    const isApi = external ? Boolean(operation) : url.pathname.startsWith('/api/store/');
+    const path = operation ? operation.path : url.pathname;
+    requests++;
+    concurrent++;
     const start = performance.now();
     let status: number | null = null;
     let shape: Shape = {};
     let applied: number[] = [];
     try {
-      const response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 4000 });
-      status = response.status();
+      const remote = external
+        ? await external.read(url, method as 'GET' | 'HEAD', request.headers().accept)
+        : undefined;
+      const response = remote
+        ? undefined
+        : await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 4000 });
+      if (remote) {
+        received += remote.body.length;
+        if (received > 32 * 1024 * 1024) throw new Error('External response budget exceeded');
+      }
+      status = remote?.status ?? response!.status();
+      const forward = () =>
+        remote
+          ? route.fulfill({ status: remote.status, headers: remote.headers, body: remote.body })
+          : route.fulfill({ response });
       if (status >= 300 && status < 400) {
         await route.abort('blockedbyclient');
       } else if (!isApi) {
-        await route.fulfill({ response });
+        await forward();
       } else {
         let payload: unknown;
         try {
-          payload = await response.json();
+          if (!remote) payload = await response!.json();
+          else if (/\bjson\b/i.test(remote.headers['content-type'] ?? ''))
+            payload = JSON.parse(remote.body.toString());
         } catch {
           payload = undefined;
         }
         const matching = activeIndices.filter((index) => {
           const item = mutations[index];
-          return item.endpoint === url.pathname && item.method === request.method();
+          return item.endpoint === path && item.method === method;
         });
         const output = mutate(
           payload,
@@ -196,13 +252,14 @@ export async function installInterception(
           });
         } else {
           if (payload !== undefined) shape = responseShape(payload);
-          await route.fulfill({ response });
+          await forward();
         }
       }
     } catch {
       status = null;
       await route.abort('failed').catch(() => {});
     } finally {
+      concurrent--;
       if (isApi) {
         let page = '/';
         try {
@@ -211,8 +268,8 @@ export async function installInterception(
           /* frame may have closed */
         }
         record({
-          method: request.method(),
-          path: url.pathname,
+          method,
+          path,
           url: page,
           status,
           shape,

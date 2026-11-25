@@ -5,6 +5,19 @@ services:
     ports:
       - '127.0.0.1:4311:4311'
     shm_size: 512mb
+    environment:
+      BREAKTRACE_ALLOWED_ORIGINS: ${BREAKTRACE_ALLOWED_ORIGINS:-}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4311/api/health',{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)process.exitCode=1},()=>{process.exitCode=1})",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     volumes:
       - evidence:/app/.data
     security_opt:

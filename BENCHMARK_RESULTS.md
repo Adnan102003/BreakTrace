@@ -38,3 +38,9 @@ The benchmark writes raw per-scenario browser measurements, generated Playwright
 - [Machine-readable summary](docs/evidence/summary.json)
 
 These curated synthetic fixtures evaluate the included workflows on the measured machine. The results do not establish real-world production accuracy, performance, or incident probability.
+
+## Phase 2 demo rerun
+
+The Phase 2 rerun executed the same 30 fixtures on November 25, 2026 in Asia/Colombo. It detected all 20 injected failures, passed all 10 controls, and isolated the labeled mutation set in all 20 failing cases. All 20 generated specs reproduced the original failure. Both eligible generated specs and both repair verifications passed with the reviewed patch. The observed mean was 2,730 ms. The two timing measurements came from separate local runs without a controlled performance comparison. [Phase 2 summary](docs/evidence/phase2-summary.json)
+
+Run `npm run benchmark -- .data/phase2-benchmark` to reproduce the rerun. The workspace output contains the raw browser, trial and Playwright reports. The staging integration tests use a separate synthetic response transport.

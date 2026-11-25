@@ -16,6 +16,9 @@ export type Catalog = {
   imported: ApiOperation[];
   thresholds: Gate;
   ai: boolean;
+  storage: 'json' | 'mongo';
+  authorization: { projectId: string; allowlisted: boolean; verifiedAt?: string }[];
+  projectImports: { projectId: string; operations: ApiOperation[] }[];
 };
 export type Summary = {
   id: string;
@@ -31,7 +34,7 @@ export type Summary = {
 
 export async function api<T>(
   path: string,
-  options?: { method: 'PUT' | 'POST'; body?: unknown },
+  options?: { method: 'PUT' | 'POST' | 'DELETE'; body?: unknown },
 ): Promise<T> {
   const response = await fetch(
     '/api' + path,

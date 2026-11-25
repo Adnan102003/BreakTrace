@@ -1,24 +1,33 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import type { Execution, Issue, Scenario, Step, Workflow } from '../../packages/shared/contracts';
-import { installInterception } from '../../packages/mutation-engine';
+import { installInterception, type ExternalTransport } from '../../packages/mutation-engine';
 import { evaluate } from '../../packages/validation-engine';
 
 const windowSize = { width: 1160, height: 760 };
 const currentPath = (page: Page) => new URL(page.url()).pathname;
 
-export async function checkStep(page: Page, step: Step) {
+export async function checkStep(page: Page, step: Step, demo = true) {
+  if (step.action === 'navigate') {
+    const next = new URL(step.path, page.url());
+    await page.goto(next.href, { waitUntil: 'domcontentloaded' });
+    if (page.url() !== next.href) throw new Error('Navigation expectation failed');
+    return [];
+  }
   if (step.action === 'rules') {
     return Promise.all(
       step.rules.map((rule) =>
-        evaluate(rule, async (key) => {
-          const value = await page
-            .getByTestId(key)
-            .getAttribute('data-value', { timeout: 1400 })
-            .catch(() => null);
+        evaluate(rule, async (key, read) => {
+          const node = page.getByTestId(key);
+          const value = await (
+            read === 'text'
+              ? node.innerText({ timeout: 1400 })
+              : node.getAttribute('data-value', { timeout: 1400 })
+          ).catch(() => null);
           return value !== null && value.trim() && Number.isFinite(Number(value)) ? Number(value) : null;
         }),
       ),
@@ -26,21 +35,26 @@ export async function checkStep(page: Page, step: Step) {
   }
   const node = page.getByTestId(step.target);
   const storeError = page.getByTestId('store-error');
-  await node.or(storeError).first().waitFor({ state: 'visible', timeout: 5000 });
-  if (step.target !== 'store-error' && (await storeError.isVisible()))
-    throw new Error('Store entered its error state');
+  if (demo) {
+    await node.or(storeError).first().waitFor({ state: 'visible', timeout: 5000 });
+    if (step.target !== 'store-error' && (await storeError.isVisible()))
+      throw new Error('Store entered its error state');
+  }
   if (step.action === 'click') {
     await node.click();
     if (step.path) {
-      await Promise.race([
-        page.waitForURL((url) => url.pathname === step.path, {
-          timeout: 5000,
-          waitUntil: 'domcontentloaded',
-        }),
-        storeError.waitFor({ state: 'visible', timeout: 5200 }).then(() => {
-          throw new Error('Store entered its error state');
-        }),
-      ]);
+      const expected = page.waitForURL((url) => url.pathname === step.path, {
+        timeout: 5000,
+        waitUntil: 'domcontentloaded',
+      });
+      await (demo
+        ? Promise.race([
+            expected,
+            storeError.waitFor({ state: 'visible', timeout: 5200 }).then(() => {
+              throw new Error('Store entered its error state');
+            }),
+          ])
+        : expected);
     }
   } else {
     await node.waitFor({ state: 'visible' });
@@ -52,8 +66,44 @@ export async function checkStep(page: Page, step: Step) {
 
 export class BrowserRunner {
   private browser?: Browser;
+  private externalBrowser?: Browser;
+  private denyProxy?: Server;
+
+  private async launchExternal() {
+    if (!this.denyProxy) {
+      const proxy = createServer((_req, res) => {
+        res.writeHead(403);
+        res.end();
+      });
+      proxy.on('connect', (_req, socket) => socket.destroy());
+      await new Promise<void>((resolve, reject) => {
+        proxy.once('error', reject);
+        proxy.listen(0, '127.0.0.1', resolve);
+      });
+      this.denyProxy = proxy;
+    }
+    const address = this.denyProxy.address();
+    if (!address || typeof address === 'string') throw new Error('Browser deny proxy did not start');
+    return chromium.launch({
+      chromiumSandbox: true,
+      proxy: { server: `http://127.0.0.1:${address.port}`, bypass: '<-loopback>' },
+      args: ['--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
+    });
+  }
+
   async close() {
-    await this.browser?.close();
+    try {
+      await Promise.all([this.browser?.close(), this.externalBrowser?.close()]);
+    } finally {
+      const proxy = this.denyProxy;
+      this.denyProxy = undefined;
+      if (proxy) {
+        await new Promise<void>((resolve) => {
+          proxy.close(() => resolve());
+          proxy.closeAllConnections();
+        });
+      }
+    }
   }
 
   async execute(
@@ -62,9 +112,13 @@ export class BrowserRunner {
     scenario: Scenario,
     indices: number[],
     artifact?: { directory: string; name: string },
+    external?: ExternalTransport,
   ): Promise<Execution> {
-    if (!this.browser?.isConnected()) this.browser = await chromium.launch();
-    const context = await this.browser.newContext({
+    if (external && !this.externalBrowser?.isConnected())
+      this.externalBrowser = await this.launchExternal();
+    if (!external && !this.browser?.isConnected()) this.browser = await chromium.launch();
+    const browser = external ? this.externalBrowser! : this.browser!;
+    const context = await browser.newContext({
       viewport: windowSize,
       deviceScaleFactor: 1,
       serviceWorkers: 'block',
@@ -114,6 +168,7 @@ export class BrowserRunner {
             });
         },
         indices,
+        external,
       );
       page.on('framenavigated', (frame) => {
         const url = new URL(frame.url());
@@ -124,7 +179,9 @@ export class BrowserRunner {
           key: `runtime:${currentPath(page)}`,
           kind: 'runtime',
           page: currentPath(page),
-          message: 'Uncaught JavaScript error in the demo page',
+          message: external
+            ? 'Uncaught JavaScript error in the target page'
+            : 'Uncaught JavaScript error in the demo page',
         }),
       );
       page.on('console', (message) => {
@@ -152,7 +209,7 @@ export class BrowserRunner {
         if (performance.now() - start > 30_000)
           throw new Error('Workflow exceeded the browser execution budget');
         try {
-          const evidence = await checkStep(page, step);
+          const evidence = await checkStep(page, step, !external);
           output.rules.push(...evidence);
           for (const rule of evidence.filter((result) => !result.passed)) {
             log({
@@ -164,11 +221,15 @@ export class BrowserRunner {
           }
           if (step.action === 'rules') await capture(false);
         } catch {
-          const navigation = step.action === 'click' && step.path && currentPath(page) !== step.path;
-          const shownError = await page
-            .getByTestId('store-error')
-            .isVisible()
-            .catch(() => false);
+          const navigation =
+            step.action === 'navigate' ||
+            (step.action === 'click' && step.path && currentPath(page) !== step.path);
+          const shownError =
+            !external &&
+            (await page
+              .getByTestId('store-error')
+              .isVisible()
+              .catch(() => false));
           log({
             key: `step:${index}:${step.action}`,
             kind: navigation ? 'navigation' : 'assertion',

@@ -6,6 +6,7 @@ import type { Repair, Run } from '../../packages/shared/contracts';
 import { isolate } from '../../packages/mutation-engine/isolate';
 import { BrowserRunner, compareIssues, compareScreens } from './browser';
 import { assess } from './analysis';
+import { TargetError, type PinnedTarget } from './targets';
 
 const ids = (count: number) => Array.from({ length: count }, (_, index) => index);
 
@@ -13,21 +14,38 @@ export async function executeRun(
   run: Run,
   runner: BrowserRunner,
   directory?: string,
-  update: (phase: string) => void = () => {},
+  update: (phase: string) => void | Promise<void> = () => {},
+  target?: PinnedTarget,
 ) {
-  const demo = await startDemo({ resilient: run.project.version === 'resilient' });
-  const save = (name: string) => (directory ? { directory, name } : undefined);
+  const external = run.project.kind === 'external' ? run.project : undefined;
+  if (external && (!target || target.origin !== external.url))
+    throw new TargetError('Authorize this target before running a workflow');
+  const demo = external
+    ? undefined
+    : await startDemo({ resilient: 'version' in run.project && run.project.version === 'resilient' });
+  const transport = external && target ? { ...target, operations: external.endpoints } : undefined;
+  const origin = transport?.origin ?? demo!.url;
+  const save = (name: string) =>
+    directory && (!external || external.captureScreenshots) ? { directory, name } : undefined;
   try {
-    update('Recording baseline');
-    run.baseline = await runner.execute(demo.url, run.workflow, run.scenario, [], save('baseline.png'));
-    update('Applying response mutations');
+    await update('Recording baseline');
+    run.baseline = await runner.execute(
+      origin,
+      run.workflow,
+      run.scenario,
+      [],
+      save('baseline.png'),
+      transport,
+    );
+    await update('Applying response mutations');
     const active = ids(run.scenario.mutations.length);
     run.variant = await runner.execute(
-      demo.url,
+      origin,
       run.workflow,
       run.scenario,
       active,
       save('variant.png'),
+      transport,
     );
     run.findings = compareIssues(run.baseline, run.variant);
     let result: Run['status'] = run.baseline.issueLog.length
@@ -39,12 +57,12 @@ export async function executeRun(
       result = 'inconclusive';
     if (directory) run.screenshots = await compareScreens(directory, run.baseline, run.variant);
     if (result === 'failed' && run.findings.length) {
-      update('Isolating the failure');
+      await update('Isolating the failure');
       const signature = run.findings.map((issue) => issue.key);
       run.isolation = await isolate(active.length, signature, async (subset) =>
         compareIssues(
           run.baseline!,
-          await runner.execute(demo.url, run.workflow, run.scenario, subset),
+          await runner.execute(origin, run.workflow, run.scenario, subset, undefined, transport),
         ).map((issue) => issue.key),
       );
     }
@@ -52,12 +70,13 @@ export async function executeRun(
     run.risk = assess(run);
     run.phase = 'Complete';
   } finally {
-    await demo.close();
+    await demo?.close();
   }
 }
 
 export function canVerify(run: Run) {
   return (
+    run.project.kind !== 'external' &&
     run.project.version === 'original' &&
     run.status === 'failed' &&
     run.isolation?.status === 'verified' &&

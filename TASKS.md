@@ -1,5 +1,7 @@
 # Development checklist
 
+## Bundled demo milestones
+
 - [x] Inspect workspace and available Windows development tools.
 - [x] Record initial architecture and roadmap.
 - [x] Phase 1. Install dependencies and verify build, lint and local startup.
@@ -8,7 +10,6 @@
 - [x] Phase 4. Validate generated Playwright tests, reviewed repair and CI gate.
 - [x] Phase 5. Check local security boundaries, persistence and dashboard controls. Add Docker and CI configurations.
 - [x] Phase 6. Run the benchmark and document the portfolio walkthrough.
-- [ ] Run the Docker image and hosted GitHub Actions job in environments where they are available.
 
 | Phase | Implementation evidence                                                                                                                                         |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,4 +20,26 @@
 | 5     | Fourteen Vitest and Supertest tests and two Chromium dashboard and containment tests passed. The localhost workspace persisted the original and resilient runs. |
 | 6     | Thirty labeled scenarios ran. The [benchmark report](BENCHMARK_RESULTS.md) links the raw trial records, per-spec results and machine-readable summary.          |
 
-Portable Node and Chromium are installed under `.tools` in the Windows workspace. Docker was absent, so the container build and startup remain unverified. GitHub Actions has its workflow configuration and the corresponding local checks. Hosted verification requires an authorized repository run. Ollama remains optional and requires a locally installed model.
+## Phase 2 product development
+
+- [x] Audit all original requirements and dashboard surfaces. [Generalization audit](docs/GENERALIZATION_AUDIT.md)
+- [x] Implement allowlisted external HTTPS enrollment, file proof, project-scoped workflows and scenarios, declarative rules, pinned HTTPS transport, and browser containment.
+- [x] Support project-scoped OpenAPI JSON and YAML imports, with opt-in GET and HEAD registration.
+- [x] Preserve JSON mode and verify MongoDB catalog and run persistence across separate connections using MongoDB 8.2.2.
+- [x] Exercise the main demo, all 15 screen routes, mobile keyboard navigation, and authorized external behavior in Chromium with a synthetic staging transport.
+- [x] Validate the GitHub Actions workflow with actionlint 1.7.12. Validate both Compose files against the official Compose Specification JSON schema.
+- [x] Rerun the 30-case bundled benchmark and preserve the original evidence. [Benchmark results](BENCHMARK_RESULTS.md)
+- [ ] Run a live external workflow with an operator-provided staging origin and confirmation of control.
+- [ ] Build and run the Compose stack on an approved Docker host. Windows Application Control blocked the Compose executable on this workstation, which also lacks a Docker engine.
+- [ ] Run the hosted GitHub Actions jobs when an authorized repository run is available.
+- [ ] Exercise the local Ollama adapter with an installed model. No local process answered on port 11434.
+
+### Windows process and file-lock checks
+
+The restricted Codex shell reproduced `spawn EPERM` in esbuild and reported `EPERM` for independent Node child-process calls to System32, Node itself, and esbuild. Direct PowerShell execution reported esbuild 0.28.2. The npm wrapper and native Windows x64 binary matched. Node 24.11.1 met the installed dependency requirements. The Node child process succeeded with scoped process permission both inside and outside the OneDrive working directory. The same workspace passed smoke, build, lint, and the test suites with that permission.
+
+A later browser run surfaced a separate `rename EPERM` during JSON persistence on Windows. The JSON adapter now retries transient replace errors within a bounded interval and continues to publish complete files atomically. A targeted test verifies retry and cleanup.
+
+### Phase 2 verification
+
+The final Windows run passed type checking, the production build, lint, 20 Vitest tests with a real MongoDB instance, and all five Playwright tests. The standalone MongoDB-backed server served the compiled dashboard and completed the demo baseline with a PASS gate. The staging browser test used synthetic HTTPS responses. It demonstrated permission checks, response interception and rule failure isolation without contacting a live staging site.

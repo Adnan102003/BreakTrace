@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Braces, Cable, ChevronRight, FileUp, Plus, Save, Trash2 } from 'lucide-react';
-import type { Mutation, Run } from '../../packages/shared/contracts';
-import { api, type Catalog, type Summary } from './client';
+import type { ExternalProject, Mutation, Project, Run } from '../../packages/shared/contracts';
+import { api, href, type Catalog, type Summary } from './client';
 import { Badge, Empty, ErrorMessage, Panel } from './ui';
 
 const format = (data: unknown) => JSON.stringify(data, null, 2);
@@ -31,21 +31,47 @@ export function useSave() {
 }
 
 export function Projects({ catalog }: { catalog: Catalog }) {
-  const [selected, setSelected] = useState(catalog.projects[0]);
+  const [selected, setSelected] = useState<Project>(catalog.projects[0]);
+  const [operations, setOperations] = useState('');
+  const saved = catalog.projects.find((project) => project.id === selected.id);
   const action = useSave();
+  function edit(project: Project) {
+    setSelected(project);
+    setOperations(
+      project.kind === 'external'
+        ? project.endpoints.map(({ method, path }) => `${method} ${path}`).join('\n')
+        : '',
+    );
+  }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void action.save('/projects', selected);
+    try {
+      const endpoints = operations
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const match = /^(GET|HEAD)\s+(\S+)$/.exec(line);
+          if (!match) throw new Error('Enter one GET or HEAD and a path per line.');
+          return { method: match[1] as 'GET' | 'HEAD', path: match[2] };
+        });
+      void action.save(
+        '/projects',
+        selected.kind === 'external' ? { ...selected, endpoints } : selected,
+      );
+    } catch (error) {
+      action.fail(error);
+    }
   }
   return (
     <div className="split">
       <Panel
         title="Registered projects"
-        description="Projects bind each run to a version of the synthetic storefront."
+        description="Run the bundled storefront or configure a developer-owned staging origin."
         actions={
           <button
             className="button ghost compact"
-            onClick={() => setSelected({ id: '', name: '', version: 'original' })}
+            onClick={() => edit({ id: '', name: '', version: 'original' })}
           >
             <Plus size={15} /> Add project
           </button>
@@ -56,14 +82,14 @@ export function Projects({ catalog }: { catalog: Catalog }) {
             <button
               className="list-item"
               key={item.id}
-              onClick={() => setSelected(item)}
+              onClick={() => edit(item)}
               aria-pressed={selected.id === item.id}
             >
               <Cable size={18} />
               <span>
                 <strong>{item.name}</strong>
                 <small>
-                  {item.id} · {item.version}
+                  {item.id} · {item.kind === 'external' ? item.url : item.version}
                 </small>
               </span>
               <ChevronRight size={16} />
@@ -71,44 +97,223 @@ export function Projects({ catalog }: { catalog: Catalog }) {
           ))}
         </div>
       </Panel>
-      <Panel title="Project settings">
-        <form onSubmit={submit} className="form">
-          <label>
-            Name
-            <input
-              required
-              value={selected.name}
-              onChange={(e) => setSelected({ ...selected, name: e.target.value })}
+      <div className="stack">
+        <Panel title="Project settings">
+          <form onSubmit={submit} className="form">
+            <label>
+              Name
+              <input
+                required
+                value={selected.name}
+                onChange={(e) => setSelected({ ...selected, name: e.target.value })}
+              />
+            </label>
+            <label>
+              Project ID
+              <input
+                required
+                pattern="[a-z0-9][a-z0-9\-]{0,63}"
+                value={selected.id}
+                onChange={(e) => setSelected({ ...selected, id: e.target.value })}
+              />
+            </label>
+            {!saved && (
+              <label>
+                Target type
+                <select
+                  value={selected.kind === 'external' ? 'external' : 'demo'}
+                  onChange={(e) => {
+                    const { id, name } = selected;
+                    edit(
+                      e.target.value === 'external'
+                        ? { id, name, kind: 'external', url: '', endpoints: [] }
+                        : { id, name, version: 'original' },
+                    );
+                  }}
+                >
+                  <option value="demo">Bundled storefront</option>
+                  <option value="external">Developer-owned staging</option>
+                </select>
+              </label>
+            )}
+            {selected.kind === 'external' ? (
+              <>
+                <label>
+                  HTTPS origin
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://staging.example.com"
+                    value={selected.url}
+                    onChange={(e) => setSelected({ ...selected, url: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Read-only API operations
+                  <textarea
+                    value={operations}
+                    rows={5}
+                    spellCheck={false}
+                    placeholder="GET /api/items/{id}"
+                    onChange={(e) => setOperations(e.target.value)}
+                  />
+                </label>
+                <p className="muted">
+                  Enter one operation per line. You can also register read-only operations from an
+                  OpenAPI import.
+                </p>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selected.captureScreenshots)}
+                    onChange={(e) => setSelected({ ...selected, captureScreenshots: e.target.checked })}
+                  />{' '}
+                  Save screenshots from this target
+                </label>
+              </>
+            ) : (
+              <label>
+                Storefront version
+                <select
+                  value={selected.version}
+                  onChange={(e) =>
+                    setSelected({ ...selected, version: e.target.value as typeof selected.version })
+                  }
+                >
+                  <option value="original">Original · pricing defect</option>
+                  <option value="resilient">Resilient · reviewed pricing patch</option>
+                </select>
+              </label>
+            )}
+            <button className="button primary" disabled={action.busy}>
+              <Save size={15} /> Save project
+            </button>
+            {action.feedback}
+          </form>
+        </Panel>
+        {saved?.kind === 'external' &&
+          selected.kind === 'external' &&
+          saved.url === selected.url.replace(/\/$/, '') && (
+            <TargetAuthorization
+              key={`${saved.id}:${saved.url}`}
+              project={saved}
+              authorization={catalog.authorization.find((entry) => entry.projectId === saved.id)}
             />
-          </label>
-          <label>
-            Project ID
-            <input
-              required
-              pattern="[a-z0-9][a-z0-9-]{0,63}"
-              value={selected.id}
-              onChange={(e) => setSelected({ ...selected, id: e.target.value })}
-            />
-          </label>
-          <label>
-            Storefront version
-            <select
-              value={selected.version}
-              onChange={(e) =>
-                setSelected({ ...selected, version: e.target.value as typeof selected.version })
-              }
-            >
-              <option value="original">Original · pricing defect</option>
-              <option value="resilient">Resilient · reviewed pricing patch</option>
-            </select>
-          </label>
-          <button className="button primary" disabled={action.busy}>
-            <Save size={15} /> Save project
-          </button>
-          {action.feedback}
-        </form>
-      </Panel>
+          )}
+      </div>
     </div>
+  );
+}
+
+function TargetAuthorization({
+  project,
+  authorization,
+}: {
+  project: ExternalProject;
+  authorization?: Catalog['authorization'][number];
+}) {
+  const cache = useQueryClient();
+  const [staging, setStaging] = useState(false);
+  const [challenge, setChallenge] = useState<{ path: string; contents: string; expiresAt: string }>();
+  const [confirmation, setConfirmation] = useState(false);
+  const [request, setRequest] = useState<{ busy?: boolean; error?: string; message?: string }>({});
+  async function submit(action: 'challenge' | 'verify' | 'revoke') {
+    setRequest({ busy: true });
+    try {
+      const base = `/projects/${project.id}`;
+      if (action === 'challenge') {
+        setChallenge(await api(`${base}/challenge`, { method: 'POST', body: { staging } }));
+      } else {
+        await api(`${base}/${action === 'verify' ? 'verify' : 'authorization'}`, {
+          method: action === 'verify' ? 'POST' : 'DELETE',
+        });
+        await cache.invalidateQueries({ queryKey: ['config'] });
+        setChallenge(undefined);
+        setConfirmation(false);
+      }
+      setRequest({
+        message:
+          action === 'verify'
+            ? 'Target verified.'
+            : action === 'revoke'
+              ? 'Authorization revoked for future runs.'
+              : undefined,
+      });
+    } catch (error) {
+      setRequest({ error: (error as Error).message });
+    }
+  }
+  return (
+    <Panel title="Target authorization">
+      <div className="form">
+        {authorization?.verifiedAt && authorization.allowlisted ? (
+          <Badge value="verified" />
+        ) : (
+          <p className="muted">
+            External runs require both an operator allowlist entry and proof served by the staging
+            application.
+          </p>
+        )}
+        {!authorization?.allowlisted ? (
+          <p>
+            Add <code>{project.url}</code> to <code>BREAKTRACE_ALLOWED_ORIGINS</code>, then restart the
+            API.
+          </p>
+        ) : (
+          <>
+            <label className="check">
+              <input type="checkbox" checked={staging} onChange={(e) => setStaging(e.target.checked)} />{' '}
+              I control this staging application and authorize read-only browser runs.
+            </label>
+            <div className="actions">
+              <button
+                className="button ghost"
+                disabled={!staging || request.busy}
+                onClick={() => void submit('challenge')}
+              >
+                Create challenge
+              </button>
+              {authorization.verifiedAt && (
+                <button
+                  className="button ghost"
+                  disabled={request.busy}
+                  onClick={() => setConfirmation(!confirmation)}
+                >
+                  {confirmation ? 'Cancel revocation' : 'Revoke authorization'}
+                </button>
+              )}
+              {confirmation && (
+                <button
+                  className="button primary"
+                  disabled={request.busy}
+                  onClick={() => void submit('revoke')}
+                >
+                  Confirm revocation
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {challenge && (
+          <>
+            <p>
+              Serve this text as HTTP 200 <code>text/plain</code> at <code>{challenge.path}</code> by{' '}
+              {new Date(challenge.expiresAt).toLocaleTimeString()}.
+            </p>
+            <pre>{challenge.contents}</pre>
+            <button
+              className="button primary"
+              disabled={request.busy}
+              onClick={() => void submit('verify')}
+            >
+              Verify proof
+            </button>
+          </>
+        )}
+        {request.error && <ErrorMessage error={request.error} />}
+        {request.message && <p role="status">{request.message}</p>}
+      </div>
+    </Panel>
   );
 }
 
@@ -117,7 +322,27 @@ export function Workflows({ catalog }: { catalog: Catalog }) {
   const action = useSave();
   return (
     <div className="split">
-      <Panel title="Registered workflows" description="Browser interactions and declarative checks">
+      <Panel
+        title="Registered workflows"
+        description="Browser interactions and declarative checks"
+        actions={
+          <button
+            className="button ghost compact"
+            onClick={() =>
+              setJson(
+                format({
+                  id: '',
+                  name: '',
+                  start: '/',
+                  steps: [{ action: 'visible', target: 'page-title' }],
+                }),
+              )
+            }
+          >
+            <Plus size={15} /> New workflow
+          </button>
+        }
+      >
         <div className="list">
           {catalog.workflows.map((item) => (
             <button className="list-item" key={item.id} onClick={() => setJson(format(item))}>
@@ -135,7 +360,7 @@ export function Workflows({ catalog }: { catalog: Catalog }) {
       </Panel>
       <Panel
         title="Workflow and business rules"
-        description="Edit the ID to create a new workflow. Supported steps are click, visible, text and rules."
+        description="Supported steps are navigate, click, visible, text and rules."
       >
         <form
           className="form"
@@ -158,9 +383,39 @@ export function Workflows({ catalog }: { catalog: Catalog }) {
             />
           </label>
           <p className="muted">
-            Rules support range, equal and sum-products. DOM operands read numeric data-value attributes.
-            Currency uses integer cents.
+            Set projectId to the external project ID to scope a workflow. Steps use same-origin paths or
+            data-testid selectors. Rules support range, equal and sum-products. Use read: "text" for
+            numeric text or omit it for data-value.
           </p>
+          {catalog.projects.some((project) => project.kind === 'external') && (
+            <label>
+              New external workflow template
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value)
+                    setJson(
+                      format({
+                        id: '',
+                        name: '',
+                        projectId: e.target.value,
+                        start: '/',
+                        steps: [{ action: 'visible', target: 'page-title' }],
+                      }),
+                    );
+                }}
+              >
+                <option value="">Choose a project to start a new workflow</option>
+                {catalog.projects
+                  .filter((project) => project.kind === 'external')
+                  .map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <button className="button primary" disabled={action.busy}>
             <Save size={15} /> Save workflow
           </button>
@@ -189,13 +444,13 @@ const operatorNames: Record<Mutation['operator'], string> = {
 function MutationEditor({
   item,
   index,
-  catalog,
+  operations,
   onChange,
   remove,
 }: {
   item: Mutation;
   index: number;
-  catalog: Catalog;
+  operations: Catalog['endpoints'];
   onChange: (item: Mutation) => void;
   remove: () => void;
 }) {
@@ -238,7 +493,14 @@ function MutationEditor({
               onChange({ ...item, method: method as Mutation['method'], endpoint });
             }}
           >
-            {catalog.endpoints.map(({ method, path }) => (
+            {!operations.some(
+              ({ method, path }) => method === item.method && path === item.endpoint,
+            ) && (
+              <option value={`${item.method} ${item.endpoint}`} disabled>
+                {item.method} {item.endpoint} (removed)
+              </option>
+            )}
+            {operations.map(({ method, path }) => (
               <option key={`${method} ${path}`}>
                 {method} {path}
               </option>
@@ -345,6 +607,13 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
     setRevision(revision + 1);
   };
   const action = useSave();
+  const project = catalog.projects.find((item) => item.id === draft.projectId);
+  const operations = project?.kind === 'external' ? project.endpoints : catalog.endpoints;
+  const defaultOperation =
+    project?.kind === 'external'
+      ? operations[0]
+      : operations.find(({ path }) => path === '/api/store/product/field-pack');
+  const saved = catalog.scenarios.some((item) => item.id === draft.id);
   return (
     <div className="split">
       <Panel
@@ -381,7 +650,7 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
       </Panel>
       <Panel
         title="Scenario builder"
-        description="Mutations run in the listed order on matching fixture responses."
+        description="Mutations apply to matching responses in the selected project."
       >
         <form
           className="form"
@@ -404,10 +673,27 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
               Scenario ID
               <input
                 required
-                pattern="[a-z0-9][a-z0-9-]{0,63}"
+                pattern="[a-z0-9][a-z0-9\-]{0,63}"
                 value={draft.id}
                 onChange={(e) => setDraft({ ...draft, id: e.target.value })}
               />
+            </label>
+            <label>
+              Project scope
+              <select
+                value={draft.projectId ?? ''}
+                disabled={saved || draft.mutations.length > 0}
+                onChange={(e) => load({ ...draft, projectId: e.target.value || undefined })}
+              >
+                <option value="">Bundled storefront</option>
+                {catalog.projects
+                  .filter((item) => item.kind === 'external')
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </select>
             </label>
             <label>
               Seed
@@ -426,7 +712,7 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
               key={`${revision}-${index}`}
               item={item}
               index={index}
-              catalog={catalog}
+              operations={operations}
               onChange={(next) =>
                 setDraft({
                   ...draft,
@@ -440,15 +726,16 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
             <button
               type="button"
               className="button ghost"
-              disabled={draft.mutations.length >= 8}
+              disabled={!defaultOperation || draft.mutations.length >= 8}
               onClick={() =>
+                defaultOperation &&
                 setDraft({
                   ...draft,
                   mutations: [
                     ...draft.mutations,
                     {
-                      method: 'GET',
-                      endpoint: '/api/store/product/field-pack',
+                      method: defaultOperation.method as Mutation['method'],
+                      endpoint: defaultOperation.path,
                       operator: 'remove',
                       path: 'price',
                     },
@@ -462,6 +749,14 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
               <Save size={15} /> Save scenario
             </button>
           </div>
+          {!defaultOperation && (
+            <p className="muted">
+              Register a read-only operation to add a mutation.{' '}
+              <a className="table-link" href={href('projects')}>
+                Project settings
+              </a>
+            </p>
+          )}
           {action.feedback}
         </form>
       </Panel>
@@ -471,6 +766,11 @@ export function Scenarios({ catalog }: { catalog: Catalog }) {
 
 export function Explorer({ catalog, run, runs }: { catalog: Catalog; run?: Run; runs: Summary[] }) {
   const [spec, setSpec] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [register, setRegister] = useState(false);
+  const imported = projectId
+    ? (catalog.projectImports.find((item) => item.projectId === projectId)?.operations ?? [])
+    : catalog.imported;
   const [before, setBefore] = useState('');
   const [after, setAfter] = useState('');
   const action = useSave();
@@ -600,9 +900,9 @@ export function Explorer({ catalog, run, runs }: { catalog: Catalog; run?: Run; 
           title="Imported OpenAPI operations"
           description="Inferred from the document. Browser coverage is recorded independently."
         >
-          {catalog.imported.length ? (
+          {imported.length ? (
             <div className="list">
-              {catalog.imported.map((item) => (
+              {imported.map((item) => (
                 <div className="list-item" key={`${item.method} ${item.path}`}>
                   <span>
                     <strong>
@@ -618,32 +918,64 @@ export function Explorer({ catalog, run, runs }: { catalog: Catalog; run?: Run; 
             <p className="muted">No OpenAPI document imported.</p>
           )}
         </Panel>
-        <Panel title="Import OpenAPI 3.x" description="Paste a JSON document or choose a local file.">
+        <Panel title="Import OpenAPI 3.x" description="Paste JSON or YAML or choose a local file.">
           <form
             className="form"
             onSubmit={(e) => {
               e.preventDefault();
-              try {
-                void action.save('/openapi', JSON.parse(spec), 'POST');
-              } catch (error) {
-                action.fail(error);
-              }
+              const query = projectId ? `?projectId=${projectId}${register ? '&register=1' : ''}` : '';
+              void action.save(`/openapi${query}`, { document: spec }, 'POST');
             }}
           >
             <label>
-              JSON file
+              Import scope
+              <select
+                value={projectId}
+                onChange={(e) => {
+                  setProjectId(e.target.value);
+                  setRegister(false);
+                }}
+              >
+                <option value="">Workspace reference</option>
+                {catalog.projects
+                  .filter((item) => item.kind === 'external')
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {projectId && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={register}
+                  onChange={(e) => setRegister(e.target.checked)}
+                />{' '}
+                Register imported GET and HEAD operations for this project
+              </label>
+            )}
+            <label>
+              Specification file
               <input
                 type="file"
-                accept=".json,application/json"
+                accept=".json,.yaml,.yml,application/json,application/yaml"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (file && file.size <= 49152) setSpec(await file.text());
-                  else if (file) action.fail(new Error('Choose a JSON file smaller than 48 KB.'));
+                  if (file && file.size <= 320_000) {
+                    try {
+                      setSpec(await file.text());
+                    } catch (error) {
+                      action.fail(error);
+                    }
+                  } else if (file)
+                    action.fail(new Error('Choose a JSON or YAML file smaller than 320 KB.'));
                 }}
               />
             </label>
             <label>
-              Specification JSON
+              Specification document
               <textarea
                 rows={6}
                 required

@@ -7,13 +7,17 @@ export const field = z
   .max(100)
   .regex(fieldPattern)
   .refine((value) => value.split('.').every(safeKey));
-const endpoint = z
+const noTraversal = (path: string) => !path.split('/').some((part) => part === '.' || part === '..');
+const endpointSegment = '[A-Za-z0-9._~-]+|\\{[A-Za-z_][A-Za-z0-9_-]{0,49}\\}';
+export const operationPath = z
   .string()
-  .max(120)
-  .regex(/^\/api\/store\/[a-zA-Z0-9/_-]+$/);
+  .max(160)
+  .regex(new RegExp(`^/(?:(?:${endpointSegment})(?:/(?:${endpointSegment}))*/?)?$`))
+  .refine(noTraversal);
+const endpoint = operationPath;
 const name = z.string().trim().min(1).max(80);
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
-const method = z.enum(['GET', 'POST']);
+const method = z.enum(['GET', 'HEAD', 'POST']);
 
 const onField = { endpoint, method, path: field };
 const onResponse = { endpoint, method };
@@ -51,15 +55,20 @@ export type Mutation = z.infer<typeof mutationSchema>;
 export const scenarioSchema = z.object({
   id,
   name,
+  projectId: id.optional(),
   seed: z.number().int().min(0).max(2147483647),
   mutations: z.array(mutationSchema).max(8),
 });
 export type Scenario = z.infer<typeof scenarioSchema>;
 
 const testId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/);
-const pagePath = z.enum(['/', '/product/field-pack', '/cart', '/checkout', '/confirmation']);
+const pagePath = z
+  .string()
+  .max(180)
+  .regex(/^\/(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]*$/)
+  .refine(noTraversal);
 const source = z.discriminatedUnion('from', [
-  z.object({ from: z.literal('dom'), key: testId }),
+  z.object({ from: z.literal('dom'), key: testId, read: z.enum(['data-value', 'text']).optional() }),
   z.object({ from: z.literal('literal'), value: z.number().finite() }),
 ]);
 export const ruleSchema = z.discriminatedUnion('op', [
@@ -88,6 +97,7 @@ export const ruleSchema = z.discriminatedUnion('op', [
 ]);
 export type Rule = z.infer<typeof ruleSchema>;
 export const stepSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('navigate'), path: pagePath }),
   z.object({ action: z.literal('click'), target: testId, path: pagePath.optional() }),
   z.object({ action: z.literal('visible'), target: testId }),
   z.object({ action: z.literal('text'), target: testId, value: z.string().max(100) }),
@@ -95,7 +105,13 @@ export const stepSchema = z.discriminatedUnion('action', [
 ]);
 export type Step = z.infer<typeof stepSchema>;
 export const workflowSchema = z
-  .object({ id, name, start: pagePath, steps: z.array(stepSchema).min(1).max(16) })
+  .object({
+    id,
+    name,
+    projectId: id.optional(),
+    start: pagePath,
+    steps: z.array(stepSchema).min(1).max(16),
+  })
   .refine(
     (workflow) =>
       workflow.steps.reduce(
@@ -110,13 +126,54 @@ export const workflowSchema = z
     return new Set(ids).size === ids.length;
   }, 'Rule IDs must be unique within a workflow');
 export type Workflow = z.infer<typeof workflowSchema>;
-export const projectSchema = z.object({ id, name, version: z.enum(['original', 'resilient']) });
+const demoProjectSchema = z.object({
+  id,
+  name,
+  kind: z.literal('demo').optional(),
+  version: z.enum(['original', 'resilient']),
+});
+export const externalOperationSchema = z.object({
+  method: z.enum(['GET', 'HEAD']),
+  path: operationPath,
+  summary: z.string().max(160).optional(),
+});
+export const externalProjectSchema = z.object({
+  kind: z.literal('external'),
+  id,
+  name,
+  url: z.url().max(240),
+  endpoints: z
+    .array(externalOperationSchema)
+    .max(80)
+    .refine(
+      (items) => new Set(items.map((item) => `${item.method} ${item.path}`)).size === items.length,
+      'Remove duplicate operations',
+    ),
+  captureScreenshots: z.boolean().optional(),
+});
+export const projectSchema = z.union([demoProjectSchema, externalProjectSchema]);
 export type Project = z.infer<typeof projectSchema>;
+export type ExternalProject = z.infer<typeof externalProjectSchema>;
 export const gateSchema = z
   .object({ warning: z.number().int().min(1).max(99), block: z.number().int().min(2).max(100) })
   .refine((gate) => gate.warning < gate.block);
 export type Gate = z.infer<typeof gateSchema>;
 export type ApiOperation = { method: string; path: string; summary?: string };
+export function matchOperation(operations: ApiOperation[], method: string, path: string) {
+  const exact = operations.find((entry) => entry.method === method && entry.path === path);
+  if (exact) return exact;
+  const parts = path.split('/');
+  return operations.find((entry) => {
+    if (entry.method !== method || !entry.path.includes('{')) return false;
+    const pattern = entry.path.split('/');
+    return (
+      pattern.length === parts.length &&
+      pattern.every(
+        (part, index) => part === parts[index] || (part.startsWith('{') && Boolean(parts[index])),
+      )
+    );
+  });
+}
 export type Shape = Record<string, string>;
 export type Observation = {
   method: string;

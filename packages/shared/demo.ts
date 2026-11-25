@@ -8,6 +8,8 @@ export const endpoints: ApiOperation[] = [
   { method: 'GET', path: '/api/store/quote' },
   { method: 'POST', path: '/api/store/payment' },
 ];
+export const operationsFor = (project: Project) =>
+  project.kind === 'external' ? project.endpoints : endpoints;
 export const projects: Project[] = [
   { id: 'fieldwork-shop', name: 'Fieldwork Shop', version: 'original' },
   { id: 'fieldwork-resilient', name: 'Fieldwork Shop · Resilient', version: 'resilient' },

@@ -344,6 +344,7 @@ export function Repair({ run }: { run: Run }) {
   const cache = useQueryClient();
   const [approved, setApproved] = useState(false);
   const supported =
+    run.project.kind !== 'external' &&
     run.project.version === 'original' &&
     run.status === 'failed' &&
     run.isolation?.status === 'verified' &&

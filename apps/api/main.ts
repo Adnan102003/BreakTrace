@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { z } from 'zod';
 import { createControlPlane } from './app';
+import { connectMongo } from './mongo';
+import { TargetAuthority } from './targets';
 
 const port = z.coerce
   .number()
@@ -8,11 +10,35 @@ const port = z.coerce
   .min(1024)
   .max(65535)
   .parse(process.env.BREAKTRACE_PORT ?? 4311);
-const control = createControlPlane(process.env.BREAKTRACE_DATA || '.data', {
+const data = process.env.BREAKTRACE_DATA || '.data';
+const targets = new TargetAuthority(
+  (process.env.BREAKTRACE_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+const store = process.env.BREAKTRACE_MONGO_URI
+  ? await connectMongo(
+      process.env.BREAKTRACE_MONGO_URI,
+      data,
+      process.env.BREAKTRACE_MONGO_DB || 'breaktrace',
+    )
+  : undefined;
+const control = createControlPlane(data, {
   serveWeb: true,
   model: process.env.BREAKTRACE_OLLAMA_MODEL,
+  store,
+  targets,
 });
+await control.ready;
 const host = process.env.BREAKTRACE_CONTAINER === '1' ? '0.0.0.0' : '127.0.0.1';
 control.server.listen(port, host, () =>
   console.log(`BreakTrace workspace available at http://127.0.0.1:${port}`),
 );
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void control.close().catch(() => {
+      process.exitCode = 1;
+    });
+  });
+}

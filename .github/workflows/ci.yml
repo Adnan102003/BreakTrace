@@ -7,11 +7,21 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 12
+    services:
+      mongo:
+        image: mongo:8.0
+        ports:
+          - 27017/tcp
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
@@ -19,6 +29,8 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm test
+        env:
+          BREAKTRACE_TEST_MONGO_URI: mongodb://127.0.0.1:${{ job.services.mongo.ports['27017'] }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - run: npm run smoke -- .data/ci
@@ -30,3 +42,29 @@ jobs:
           code=$?
           set -e
           test "$code" -eq 1
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate Compose definitions
+        env:
+          BREAKTRACE_MONGO_USER: ci-validation
+          BREAKTRACE_MONGO_PASSWORD: ci-validation
+          BREAKTRACE_MONGO_URI: mongodb://ci-validation:ci-validation@mongo:27017/breaktrace?authSource=admin
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.mongo.yaml config --quiet
+      - run: docker compose up --build --detach --wait --wait-timeout 90
+      - run: node scripts/check-container.mjs
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop the test container
+        if: always()
+        run: docker compose down
