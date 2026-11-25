@@ -3,7 +3,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const api = `http://127.0.0.1:${process.env.BREAKTRACE_PORT || 4311}`;
+const apiProxy = {
+  target: `http://127.0.0.1:${process.env.BREAKTRACE_PORT || 4311}`,
+  // The workspace guard checks Origin against the dashboard's original Host.
+  changeOrigin: false,
+};
 export default defineConfig({
   root: 'apps/web',
   plugins: [react(), tailwindcss()],
@@ -17,8 +21,8 @@ export default defineConfig({
     strictPort: true,
     fs: { allow: [process.cwd()] },
     proxy: {
-      '/api': api,
-      '/socket.io': { target: api, ws: true },
+      '/api': apiProxy,
+      '/socket.io': { ...apiProxy, ws: true },
     },
   },
 });

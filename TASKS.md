@@ -43,3 +43,11 @@ A later browser run surfaced a separate `rename EPERM` during JSON persistence o
 ### Phase 2 verification
 
 The final Windows run passed type checking, the production build, lint, 20 Vitest tests with a real MongoDB instance, and all five Playwright tests. The standalone MongoDB-backed server served the compiled dashboard and completed the demo baseline with a PASS gate. The staging browser test used synthetic HTTPS responses. It demonstrated permission checks, response interception and rule failure isolation without contacting a live staging site.
+
+### Development proxy authorization fix
+
+- [x] Reproduced the browser's `POST /api/runs` returning HTTP 403 on both loopback dashboard aliases. Logged the request at Express and confirmed that Vite's string proxy configuration changed Host to the API port while retaining the dashboard Origin.
+- [x] Configured the Vite HTTP and Socket.IO proxies to preserve Host. The same Express guard still rejects writes from another loopback port or a foreign origin.
+- [x] Configured the local API to use its installed Chromium cache through `PLAYWRIGHT_BROWSERS_PATH` in the root `.env` and confirmed the API watcher restarted.
+- [x] Clicked Run demo experiment on the live dashboard. Run `4a6a226b-ab0f-4a15-85b1-d2c5f698aa2b` returned HTTP 202, finished with a clean baseline and two expected findings, and isolated the price rename. Its risk score was 80 with a BLOCK gate. The screenshot, generated spec, and report endpoints returned HTTP 200.
+- [x] Passed type checking, lint, 19 Vitest tests, and all six Playwright tests. The optional MongoDB test was skipped for this proxy check. The Vite regression test covered live updates, a real demo run, screenshots, reviewed repair verification, settings saves, OpenAPI import, and rejected cross-origin writes.

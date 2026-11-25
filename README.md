@@ -16,6 +16,8 @@ npm run dev
 
 Open **http://127.0.0.1:5173** and select **Run demo experiment**. The API listens on **http://127.0.0.1:4311**. To shop in the standalone synthetic storefront, run `npm run demo` and open **http://127.0.0.1:4312**.
 
+Use the dashboard URL for browser actions. Vite proxies `/api` and `/socket.io` to the API while preserving the dashboard Host so the API can validate the browser Origin. If a running dev server still returns `Local workspace access is required` after pulling a proxy configuration change, restart Vite.
+
 For a single-server setup, run `npm run build` and `npm start`, then open port 4311. On Linux a fresh environment may need `npx playwright install --with-deps chromium`. See the [Playwright installation documentation](https://playwright.dev/docs/intro).
 
 For this Windows workspace, portable Node and the matching browser were installed under `.tools`. If Node is still absent from PATH, run the following in PowerShell before an npm command.
@@ -25,6 +27,8 @@ $env:Path = "$(Resolve-Path .tools/node-v24.11.1-win-x64);$env:Path"
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) '.tools/browsers'
 npm.cmd run dev
 ```
+
+The API can also read `PLAYWRIGHT_BROWSERS_PATH=.tools/browsers` from a root `.env` file. Restart the API after changing its browser path. A dashboard can load and queue a run before the API attempts to launch Chromium.
 
 For Docker, use `docker compose up --build` and open port 4311. The Compose volume holds the evidence store.
 
