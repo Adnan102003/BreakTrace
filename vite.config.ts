@@ -1,7 +1,7 @@
 import 'dotenv/config';
+import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 
 const apiProxy = {
   target: `http://127.0.0.1:${process.env.BREAKTRACE_PORT || 4311}`,
@@ -10,7 +10,7 @@ const apiProxy = {
 };
 export default defineConfig({
   root: 'apps/web',
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   build: {
     rollupOptions: {
       output: { manualChunks: { charts: ['recharts'], graph: ['@xyflow/react'] } },
@@ -19,7 +19,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    fs: { allow: [process.cwd()] },
+    fs: { allow: ['apps/web', 'packages/shared', 'node_modules'].map((directory) => resolve(directory)) },
     proxy: {
       '/api': apiProxy,
       '/socket.io': { ...apiProxy, ws: true },

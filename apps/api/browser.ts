@@ -51,7 +51,7 @@ export async function checkStep(
             if (read === 'string') return value?.trim();
             return value !== null && value.trim() && Number.isFinite(Number(value))
               ? Number(value)
-              : null;
+              : undefined;
           },
           api,
         ),

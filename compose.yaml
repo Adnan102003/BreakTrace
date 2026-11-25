@@ -7,13 +7,15 @@ services:
     shm_size: 512mb
     environment:
       BREAKTRACE_ALLOWED_ORIGINS: ${BREAKTRACE_ALLOWED_ORIGINS:-}
+      BREAKTRACE_OPERATOR_PASSWORD: ${BREAKTRACE_OPERATOR_PASSWORD:-}
+      BREAKTRACE_REQUIRE_OPERATOR_AUTH: ${BREAKTRACE_REQUIRE_OPERATOR_AUTH:-0}
     healthcheck:
       test:
         [
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:4311/api/health',{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)process.exitCode=1},()=>{process.exitCode=1})",
+          "const password=process.env.BREAKTRACE_OPERATOR_PASSWORD; const headers=password?{authorization:'Basic '+Buffer.from('operator:'+password).toString('base64')}:{}; fetch('http://127.0.0.1:4311/api/health',{headers,redirect:'error',signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)process.exitCode=1},()=>{process.exitCode=1})",
         ]
       interval: 5s
       timeout: 5s

@@ -80,7 +80,7 @@ const pages = [
 ];
 const copy: Record<string, string> = {
   overview: 'Monitor API regressions across your tested workflows.',
-  projects: 'Choose the synthetic application version each experiment will use.',
+  projects: 'Manage the bundled fixtures and approved local or staging applications.',
   api: 'Inspect captured requests, imported operations, and response shape changes.',
   workflows: 'Register browser steps and the rules that define correct behavior.',
   scenarios: 'Build deterministic API response mutations.',
@@ -363,7 +363,11 @@ function App() {
     refetchInterval: 4000,
   });
   const runs = list.data ?? [];
-  const id = route.id ?? runs[0]?.id;
+  const projectRuns = route.tab === 'runs' && route.project
+    ? runs.filter((item) => item.projectId === route.project)
+    : runs;
+  const selectedInProject = !route.project || projectRuns.some((item) => item.id === route.id);
+  const id = (selectedInProject ? route.id : undefined) ?? projectRuns[0]?.id;
   const detail = useQuery({
     queryKey: ['run', id],
     queryFn: () => api<Run>(`/runs/${id}`),
@@ -511,11 +515,7 @@ function App() {
                 </label>
               </div>
               <RunTable
-                rows={runs.filter(
-                  (item) =>
-                    (!route.project || item.projectId === route.project) &&
-                    (!runStatus || item.status === runStatus),
-                )}
+                rows={projectRuns.filter((item) => !runStatus || item.status === runStatus)}
               />
             </Panel>
           </div>

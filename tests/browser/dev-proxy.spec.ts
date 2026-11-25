@@ -1,10 +1,12 @@
-import { expect, test } from '@playwright/test';
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { expect, test } from './dashboard';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 import { createControlPlane } from '../../apps/api/app';
 import type { Run } from '../../packages/shared/contracts';
+
+test.use({ acceptDownloads: true });
 
 test('the Vite proxy preserves workspace authorization for dashboard actions', async ({ page }) => {
   test.setTimeout(90_000);
@@ -37,6 +39,12 @@ test('the Vite proxy preserves workspace authorization for dashboard actions', a
     }
     await vite.listen();
     const origin = `http://127.0.0.1:${address.port}`;
+    const privateEvidence = resolve(root, 'private-evidence.json');
+    await writeFile(privateEvidence, '{}');
+    const directFile = await page.request.get(
+      `${origin}/@fs/${privateEvidence.replaceAll('\\', '/')}`,
+    );
+    expect(directFile.status()).toBe(403);
     await page.goto(origin);
     await expect(page.getByText('Live', { exact: true })).toBeVisible();
 
@@ -77,17 +85,33 @@ test('the Vite proxy preserves workspace authorization for dashboard actions', a
     expect(pdf.status()).toBe(200);
     expect(pdf.headers()['content-type']).toContain('application/pdf');
     expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-');
+    const jsonReport = await page.request.get(`${reportUrl}/report?format=json`);
+    expect(jsonReport.ok()).toBe(true);
+    expect((await jsonReport.json()).id).toBe(id);
     await page.getByRole('link', { name: 'Deployment risk' }).click();
     await expect(page.getByRole('progressbar', { name: 'Evidence risk score' })).toHaveAttribute(
       'data-gate',
       'BLOCK',
     );
+    for (const format of ['JSON', 'HTML', 'PDF']) {
+      const downloading = page.waitForEvent('download');
+      await page.getByRole('link', { name: `Export ${format} report` }).click();
+      expect((await downloading).suggestedFilename()).toBe(`breaktrace-${id}.${format.toLowerCase()}`);
+    }
 
     await page.getByRole('link', { name: 'Regression tests' }).click();
+    const specDownload = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Export .spec.ts' }).click();
+    expect((await specDownload).suggestedFilename()).toBe(`breaktrace-${id}.spec.ts`);
     await page.getByRole('button', { name: 'Preview draft' }).click();
     await expect(page.getByText(/## Observed evidence/)).toContainText(id);
+    await page.getByLabel('Draft type').selectOption('pull-request');
+    await expect(page.getByText(/# Proposed change/)).toContainText(id);
     await page.getByLabel('Draft type').selectOption('workflow');
     await expect(page.getByText(/name: BreakTrace evidence gate/)).toContainText('npm run gate');
+    const ciDownload = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Download draft' }).click();
+    expect((await ciDownload).suggestedFilename()).toBe('breaktrace-workflow.yml');
     const ci = await page.request.get(`${reportUrl}/drafts/workflow?download=1`);
     expect(ci.headers()['content-disposition']).toContain('breaktrace-workflow.yml');
 
@@ -137,6 +161,7 @@ test('the Vite proxy preserves workspace authorization for dashboard actions', a
     const config = await page.request.get(`${origin}/api/config`);
     expect((await config.json()).thresholds).toEqual({ warning: 30, block: 70 });
   } finally {
+    await page.close();
     await vite?.close();
     await control.close();
   }

@@ -37,6 +37,11 @@ it('authorizes a real loopback application, refuses redirects and removes its co
     await expect(pinned.read(new URL('http://127.0.0.1:4311/api/config'), 'GET')).rejects.toThrow(
       'outside',
     );
+    const pending = await api.post('/api/projects/room-board/challenge').send({ staging: true }).expect(200);
+    fixture.setProof(pending.body.contents);
+    await api.delete('/api/projects/room-board/authorization').expect(200);
+    await api.post('/api/projects/room-board/verify').expect(400);
+    await api.post('/api/projects/room-board/connection').expect(400);
     await api
       .put('/api/projects')
       .send({ ...project, name: 'Operations Room Board' })

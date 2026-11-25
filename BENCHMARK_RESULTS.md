@@ -1,5 +1,13 @@
 # Synthetic benchmark results
 
+## v1.0.0 release rerun
+
+On Windows with Node 24.11.1 and Chromium, Fieldwork detected all 20 labeled failures and passed all 10 controls, with zero missed, false-positive, or indeterminate cases. All 20 expected isolation results matched. The 20 generated specs reproduced the original failures and both reviewed repair specs passed. The mean case execution time was 4,945 ms. [Fieldwork release summary](docs/evidence/release-1.0.0-fieldwork.json)
+
+Room Board matched all four labels. The baseline and harmless room-label removal passed. The renamed capacity and negative reservation cases failed and each isolated to mutation index 0. [Room Board release summary](docs/evidence/release-1.0.0-rooms.json)
+
+These curated scenarios measure the tested workflows and fixtures. The results below document earlier rounds.
+
 Collected on November 25, 2026 in Asia/Colombo. The local run used Windows 11 build 26300, Node.js 24.11.1 and Playwright 1.65.1 with Chromium 159.0.8154.6.
 
 | Measure                                          |     Observed |

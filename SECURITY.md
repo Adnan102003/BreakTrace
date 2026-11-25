@@ -1,6 +1,6 @@
 # Security model
 
-BreakTrace is a single-operator lab for the bundled demo and authorized local and staging applications. The default API binds 127.0.0.1. Compose exposes its container port on host loopback. The API and Socket.IO require a matching loopback Host and Origin when the browser sends both. Local processes retain access to the API and evidence files.
+BreakTrace is a single-operator lab for the bundled demo and authorized local and staging applications. The default API binds 127.0.0.1. Compose publishes its container port on host loopback. The UI, API and Socket.IO check the request Host and browser Origin. The optional operator password adds HTTP authentication to the compiled UI, API, downloads and Socket.IO. The private deployment requires it and uses SSH for encrypted access. The credential grants access to the whole workspace. Processes running as the workspace OS user can still read the evidence directory.
 
 - Run requests choose registered IDs. Demo runs pin a known loopback fixture to its exact origin and port. External runs require the server allowlist and a project-specific verification file that is fetched again before every run.
 - Staging traffic uses validated public DNS answers and direct TLS to one pinned address. The application hostname is used for both SNI and certificate validation. Explicitly approved local targets pin literal 127.0.0.1 and an explicit port. Unregistered API reads, writes, cross-origin requests and redirects are rejected. External Chromium has its own deny proxy. Both modes block service workers and close WebSockets.
@@ -9,7 +9,7 @@ BreakTrace is a single-operator lab for the bundled demo and authorized local an
 - External screenshots require opt-in and can contain rendered staging data. Use synthetic values in workflows and scenario definitions.
 - Declarative steps use known routes and test IDs. The recorder retains typed values in memory and saves environment variable names in the workflow. Repairs require explicit approval. External repair reads operator-approved static output into bounded snapshots and runs the copies in sandboxed Chromium with outbound access denied.
 - HTTP bodies, catalog sizes, queue length, per-action timeouts, delay and mutation counts, trial count, and stored run count are bounded.
-- Model analysis is opt-in and sends reduced evidence to the selected provider. Ollama uses loopback. Gemini, OpenAI and GitHub tokens stay in server environment configuration. GitHub linking requests metadata for an operator-allowlisted repository. Draft files are local downloads.
+- Model analysis is opt-in and sends reduced evidence, including failed rule IDs, to the selected provider. Ollama uses loopback. Gemini, OpenAI and GitHub tokens stay in server environment configuration. GitHub linking requests metadata for an operator-allowlisted repository. Draft files are local downloads.
 
 ## Reporting
 

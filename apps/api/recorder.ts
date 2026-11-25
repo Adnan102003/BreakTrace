@@ -172,15 +172,20 @@ export class Recorder {
     if (workflow.projectId !== session.draft.projectId)
       throw new TargetError('Replay must stay in the selected project');
     const context = await session.runner.context(Boolean(session.transport));
+    let keepContext = false;
     try {
       const responses = new Map<string, unknown>();
+      const operations: Recording['operations'] = [];
       await installInterception(
         context,
         session.origin,
         [],
         0,
         (event) => {
-          if (responses.size < 80) responses.set(`${event.method} ${event.path}`, event.data);
+          if (operations.length < 40) {
+            operations.push({ method: event.method, path: event.path, status: event.status });
+            responses.set(`${event.method} ${event.path}`, event.data);
+          }
         },
         [],
         session.transport,
@@ -199,10 +204,15 @@ export class Recorder {
         if (rules.some((result) => !result.passed))
           throw new TargetError('The replay failed a business rule');
       }
-      session.draft = structuredClone(workflow);
-      return await this.snapshot(session, true);
+      const replayed = { ...session, page, responses, operations, draft: structuredClone(workflow) };
+      const result = await this.snapshot(replayed, true);
+      this.session(id);
+      this.current = replayed;
+      keepContext = true;
+      await session.page.context().close().catch(() => {});
+      return result;
     } finally {
-      await context.close();
+      if (!keepContext) await context.close().catch(() => {});
     }
   }
 

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './dashboard';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createControlPlane } from '../../apps/api/app';
@@ -20,6 +20,12 @@ test('every workspace route is reachable and mobile navigation supports keyboard
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Overview');
     await page.getByRole('link', { name: 'New execution' }).click();
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Test executions');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.getByRole('button', { name: 'Use light theme' }).click();
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.getByRole('button', { name: 'Use dark theme' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     const navigation = page.getByRole('navigation', { name: 'Workspace navigation' });
     for (const title of [
       'Overview',

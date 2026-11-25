@@ -2,6 +2,8 @@
 
 Base URL `http://127.0.0.1:4311/api`. Use JSON for writes. The development dashboard proxies the API and Socket.IO through Vite.
 
+When `BREAKTRACE_OPERATOR_PASSWORD` is set, send HTTP Basic credentials using username `operator` and the workspace password. The private deployment requires authentication and keeps requests on a loopback SSH tunnel. HTTP and Socket.IO continue to reject foreign Host or browser Origin values.
+
 | Method and path                     | Input and result                                                                                                                                                              |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET /health                         | Local status and storage mode                                                                                                                                                 |
@@ -17,12 +19,13 @@ Base URL `http://127.0.0.1:4311/api`. Use JSON for writes. The development dashb
 | POST /runs                          | Enqueue `{ projectId, workflowId, scenarioId }`. HTTP 202 returns `{ id }`                                                                                                    |
 | GET /runs                           | Newest-first summaries                                                                                                                                                        |
 | GET /runs/:id                       | Complete run record with evidence                                                                                                                                             |
-| GET /runs/:id/report                | Machine-readable report attachment                                                                                                                                            |
+| GET /runs/:id/report                | Report attachment. Set `format=json`, `format=html` or `format=pdf` |
 | GET /runs/:id/artifact/:name        | A whitelisted screenshot or diff                                                                                                                                              |
 | GET /runs/:id/test                  | Playwright TypeScript. Add `?download=1` for an attachment                                                                                                                    |
 | GET /runs/:id/analysis              | Deterministic recommendation and reviewed repair eligibility                                                                                                                  |
-| POST /runs/:id/analysis             | Optional unverified local Ollama suggestion                                                                                                                                   |
-| POST /runs/:id/repair               | Queue the reviewed pricing patch after `{ "approved": true }`                                                                                                                 |
+| POST /runs/:id/analysis             | Optional suggestion from the configured Ollama, Gemini or OpenAI provider |
+| POST /runs/:id/repair/preview       | Preview bounded replacements in an operator-approved static project |
+| POST /runs/:id/repair               | Queue the reviewed patch with `{ "approved": true }`. Include the preview `reviewId` for a static replacement. |
 | GET /compare?before=UUID&after=UUID | Compare observed baseline shape snapshots                                                                                                                                     |
 
 The `run:update` event contains `id`, `status`, and `phase`. Fetch the full record over HTTP. Browser clients can poll when the socket disconnects.

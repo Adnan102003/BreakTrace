@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './dashboard';
+import { test as boundaryTest } from '@playwright/test';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createControlPlane } from '../../apps/api/app';
@@ -55,7 +56,10 @@ test('operator enrolls a staging project and reproduces a scoped rule failure in
     const address = control.server.address();
     if (!address || typeof address === 'string') throw new Error('Test listener did not start');
     await page.goto(`http://127.0.0.1:${address.port}`);
-    await page.getByRole('link', { name: 'Projects', exact: true }).click();
+    const projectsLink = page
+      .getByRole('navigation', { name: 'Workspace navigation' })
+      .getByRole('link', { name: 'Projects', exact: true });
+    await projectsLink.click();
     await page.getByRole('button', { name: 'Add project' }).click();
     await page.getByLabel('Target type').selectOption('external');
     await page.getByLabel('Name', { exact: true }).fill('Staging fixture');
@@ -70,6 +74,8 @@ test('operator enrolls a staging project and reproduces a scoped rule failure in
     proof = (await reportedProof.textContent())!;
     await page.getByRole('button', { name: 'Verify proof' }).click();
     await expect(page.getByText('Target verified.')).toBeVisible();
+    await page.getByRole('button', { name: 'Check connection' }).click();
+    await expect(page.getByText('Connection and target proof verified.')).toBeVisible();
 
     await page.getByRole('link', { name: 'API explorer' }).click();
     await page.getByLabel('Import scope').selectOption('staging-fixture');
@@ -90,24 +96,17 @@ test('operator enrolls a staging project and reproduces a scoped rule failure in
         name: 'Staging price',
         projectId: 'staging-fixture',
         start: '/products',
-        steps: [
-          { action: 'visible', target: 'price' },
-          {
-            action: 'rules',
-            rules: [
-              {
-                id: 'price-is-positive',
-                name: 'Price is positive',
-                op: 'range',
-                source: { from: 'dom', key: 'price', read: 'text' },
-                min: 1,
-                max: 100,
-              },
-            ],
-          },
-        ],
+        steps: [{ action: 'visible', target: 'price' }],
       }),
     );
+    await page.getByText('Open visual rule builder').click();
+    await page.getByLabel('Rule name').fill('Price is positive');
+    await page.getByRole('combobox', { name: 'Operator', exact: true }).selectOption('range');
+    await page.getByLabel('Element test ID').fill('price');
+    await page.getByLabel('Minimum').fill('1');
+    await page.getByLabel('Maximum').fill('100');
+    await page.getByRole('button', { name: 'Add rule to workflow' }).click();
+    await expect(page.getByText('Rule added to the workflow draft.')).toBeVisible();
     await page.getByRole('button', { name: 'Save workflow' }).click();
     await expect(page.getByText('Saved to this workspace.')).toBeVisible();
     await page.getByRole('link', { name: 'Failure scenarios' }).click();
@@ -119,6 +118,8 @@ test('operator enrolls a staging project and reproduces a scoped rule failure in
     await expect(page.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(
       'GET /v1/products/{id}',
     );
+    await page.getByRole('button', { name: 'Add mutation' }).click();
+    await page.getByRole('button', { name: 'Remove mutation' }).last().click();
     await page.getByRole('button', { name: 'Save scenario' }).click();
     await expect(page.getByText('Saved to this workspace.')).toBeVisible();
 
@@ -143,12 +144,46 @@ test('operator enrolls a staging project and reproduces a scoped rule failure in
     await page.getByRole('link', { name: 'Regression tests' }).click();
     await expect(page.getByText(/const target = await new TargetAuthority/)).toBeVisible();
     await expect(page.getByText(proof, { exact: true })).toHaveCount(0);
+
+    await page.getByRole('link', { name: 'Failure scenarios' }).click();
+    await page.getByRole('button', { name: /Remove price on staging/ }).click();
+    await page.getByText('Captured response previews').click();
+    await page.getByLabel('Evidence run').selectOption(report.id);
+    await expect(page.getByLabel('Captured operation')).toHaveValue('GET /v1/products/{id}');
+    await expect(page.getByText('"price": 10', { exact: false })).toBeVisible();
+    await page.getByLabel('Field path').fill('temporary');
+    await page.getByLabel('Captured JSON path for mutation 1').selectOption('price');
+    await expect(page.getByLabel('Field path')).toHaveValue('price');
+
+    await projectsLink.click();
+    await page.getByRole('button', { name: /Staging fixture/ }).click();
+    await page.getByRole('button', { name: 'Revoke authorization' }).click();
+    await page.getByRole('button', { name: 'Cancel revocation' }).click();
+    await page.getByRole('button', { name: 'Revoke authorization' }).click();
+    await page.getByRole('button', { name: 'Confirm revocation' }).click();
+    await expect(page.getByText('Authorization revoked for future runs.')).toBeVisible();
+    await page.getByRole('link', { name: 'Test executions' }).click();
+    await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('staging-fixture');
+    await expect(page.getByRole('button', { name: 'Start execution' })).toBeDisabled();
+
+    await projectsLink.click();
+    const project = page.getByRole('button', { name: /Staging fixture/ });
+    await project.click();
+    await page.getByRole('link', { name: 'Project history' }).click();
+    await expect(page.getByLabel('Filter by project')).toHaveValue('staging-fixture');
+    await projectsLink.click();
+    await project.click();
+    await page.getByRole('button', { name: 'Delete project' }).click();
+    await page.getByRole('button', { name: 'Cancel deletion' }).click();
+    await page.getByRole('button', { name: 'Delete project' }).click();
+    await page.getByRole('button', { name: 'Confirm deletion' }).click();
+    await expect(project).toHaveCount(0);
   } finally {
     await control.close();
   }
 });
 
-test('external Chromium requests cannot reach unregistered API routes, other origins, or write methods', async () => {
+boundaryTest('external Chromium requests cannot reach unregistered API routes, other origins, or write methods', async () => {
   const runner = new BrowserRunner();
   const visited: string[] = [];
   try {

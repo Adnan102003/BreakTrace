@@ -890,21 +890,16 @@ export function Scenarios({ catalog, runs }: { catalog: Catalog; runs: Summary[]
                     (entry) => entry.kind !== 'external' && entry.id === item.projectId,
                   )),
           )}
-          choose={(method, endpoint, field) =>
+          mutations={draft.mutations}
+          choose={(index, field) =>
             setDraft({
               ...draft,
-              mutations: draft.mutations.map((mutation) =>
-                mutation.method === method && mutation.endpoint === endpoint && 'path' in mutation
+              mutations: draft.mutations.map((mutation, position) =>
+                position === index && 'path' in mutation
                   ? { ...mutation, path: field }
                   : mutation,
               ),
             })
-          }
-          canChoose={(method, endpoint) =>
-            draft.mutations.some(
-              (mutation) =>
-                mutation.method === method && mutation.endpoint === endpoint && 'path' in mutation,
-            )
           }
         />
       </Panel>
@@ -914,12 +909,12 @@ export function Scenarios({ catalog, runs }: { catalog: Catalog; runs: Summary[]
 
 function CapturedPreviews({
   runs,
+  mutations,
   choose,
-  canChoose,
 }: {
   runs: Summary[];
-  choose: (method: string, endpoint: string, field: string) => void;
-  canChoose: (method: string, endpoint: string) => boolean;
+  mutations: Mutation[];
+  choose: (index: number, field: string) => void;
 }) {
   const [id, setId] = useState('');
   const [operation, setOperation] = useState('');
@@ -936,6 +931,9 @@ function CapturedPreviews({
   const selected = choices.includes(operation) ? operation : choices[0];
   const original = before.find((item) => key(item) === selected);
   const mutated = after.find((item) => key(item) === selected);
+  const fields = [...new Set(Object.keys(original?.shape ?? {})
+    .filter((item) => item !== '$')
+    .map((item) => item.replaceAll('[]', '.0')))];
   return (
     <details className="panel">
       <summary>Captured response previews</summary>
@@ -987,28 +985,20 @@ function CapturedPreviews({
           </div>
         </div>
       )}
-      {original && canChoose(original.method, original.path) && (
-        <label>
-          Use a captured JSON path
-          <select
-            value=""
-            onChange={(event) => choose(original.method, original.path, event.target.value)}
-          >
-            <option value="" disabled>
-              Choose a field for matching mutations
-            </option>
-            {[
-              ...new Set(
-                Object.keys(original.shape)
-                  .filter((item) => item !== '$')
-                  .map((item) => item.replaceAll('[]', '.0')),
-              ),
-            ].map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        </label>
-      )}
+      <div className="field-grid">
+        {original && fields.length > 0 && mutations.map((mutation, index) => (
+          'path' in mutation && mutation.method === original.method && mutation.endpoint === original.path && (
+            <label key={index}>
+              Captured JSON path for mutation {index + 1}
+              <select value={fields.includes(mutation.path) ? mutation.path : ''}
+                onChange={(event) => choose(index, event.target.value)}>
+                <option value="" disabled>Choose a captured field</option>
+                {fields.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+          )
+        ))}
+      </div>
     </details>
   );
 }

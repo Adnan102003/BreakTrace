@@ -2,6 +2,8 @@
 
 The local workspace uses React and Vite for the operator UI, Express for the control plane, and a separately runnable synthetic storefront. Shared TypeScript contracts define projects, workflows, scenarios, evidence, and rules. Each run compares a fresh baseline browser context with a second context using Playwright response interception. The service emits run changes over Socket.IO and stores reports in JSON or MongoDB.
 
+The request boundary always enforces loopback Host and same-origin browser requests. When configured, the operator password is checked on HTTP requests and Socket.IO transports. The private VM configuration requires that password and keeps the service reachable through an SSH tunnel.
+
 | Boundary    | Responsibility                                                                               |
 | ----------- | -------------------------------------------------------------------------------------------- |
 | `apps/demo` | Synthetic catalog, checkout quote, mock payment and deliberately vulnerable cart calculation |
@@ -31,6 +33,6 @@ For external repair, the operator authorizes a static directory per project. The
 
 Add 25 points per failed business rule up to 50, 40 for broken browser steps or exceptions, 15 for failed transport or console errors, 10 for an affected workflow and 15 for an independently reproduced failure. Add up to 15 points in proportion to missing registered endpoint coverage. Unavailable evidence adds the warning threshold. Cap the sum at 100. The default thresholds are WARNING at 25 and BLOCK at 60. The CLI returns 0 for PASS/WARNING, 1 for BLOCK and 2 for invalid or inconclusive evidence.
 
-The queue runs one browser job at a time. A hosted version would need authenticated operators, per-project permissions, a durable queue with leases, a database transaction around job state and an object store for evidence. The local application uses CSS and accessible native controls for the UI components.
+The queue runs one browser job at a time. A shared tenancy would need separate identities, per-project permissions, a durable queue with leases, database transactions around job state, and an object store for evidence. The dashboard uses CSS and accessible native controls.
 
-Playwright supplies the response interception primitives. See [Playwright API mocking](https://playwright.dev/docs/mock). Local builds use Node 22.12+ or 24 with Vite. See [Vite compatibility](https://vite.dev/guide/).
+Playwright supplies the response interception primitives. The release uses Node 24 for builds and CI. The package also accepts Node 22.13 and later 22.x releases. [Playwright API mocking](https://playwright.dev/docs/mock), [ESLint runtime compatibility](https://eslint.org/docs/latest/use/getting-started/#prerequisites)

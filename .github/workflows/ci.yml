@@ -46,6 +46,19 @@ jobs:
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 18
+    strategy:
+      matrix:
+        include:
+          - storage: json
+            compose-file: compose.yaml
+          - storage: mongo
+            compose-file: compose.yaml:compose.mongo.yaml
+    env:
+      COMPOSE_FILE: ${{ matrix.compose-file }}
+      BREAKTRACE_MONGO_USER: ci-validation
+      BREAKTRACE_MONGO_PASSWORD: ci-validation
+      BREAKTRACE_MONGO_URI: mongodb://ci-validation:ci-validation@mongo:27017/breaktrace?authSource=admin
+      BREAKTRACE_REQUIRE_OPERATOR_AUTH: '1'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -53,16 +66,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Validate Compose definitions
-        env:
-          BREAKTRACE_MONGO_USER: ci-validation
-          BREAKTRACE_MONGO_PASSWORD: ci-validation
-          BREAKTRACE_MONGO_URI: mongodb://ci-validation:ci-validation@mongo:27017/breaktrace?authSource=admin
+      - name: Generate a temporary workspace password
         run: |
-          docker compose config --quiet
-          docker compose -f compose.yaml -f compose.mongo.yaml config --quiet
+          password=$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")
+          echo "::add-mask::$password"
+          echo "BREAKTRACE_OPERATOR_PASSWORD=$password" >> "$GITHUB_ENV"
+      - run: docker compose config --quiet
       - run: docker compose up --build --detach --wait --wait-timeout 90
-      - run: node scripts/check-container.mjs
+      - run: node scripts/check-container.mjs http://127.0.0.1:4311 "${{ matrix.storage }}"
       - name: Container logs
         if: failure()
         run: docker compose logs --no-color

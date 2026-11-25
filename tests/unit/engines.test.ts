@@ -124,6 +124,18 @@ describe('analysis and rules', () => {
     expect((await evaluate(withTerms, async () => 8640)).passed).toBe(true);
     expect((await evaluate(withTerms, async () => null)).passed).toBe(false);
   });
+  it('distinguishes explicit null values from missing comparison operands', async () => {
+    const left = { from: 'api', method: 'GET', endpoint: '/items', path: 'value' } as const;
+    const right = { from: 'literal', value: null } as const;
+    const base = { id: 'optional-value', name: 'Optional value', left, right };
+    const equal = { ...base, op: 'equal' } as const;
+    const unequal = { ...base, op: 'compare', comparison: 'neq' } as const;
+    const noDomValue = async () => undefined;
+    expect((await evaluate(equal, noDomValue, () => null)).passed).toBe(true);
+    expect((await evaluate(equal, noDomValue)).passed).toBe(false);
+    expect((await evaluate(unequal, noDomValue)).passed).toBe(false);
+    expect((await evaluate(unequal, noDomValue, () => 2)).passed).toBe(true);
+  });
   it('imports only descriptive operations and identifies structural changes', () => {
     expect(
       importOperations({

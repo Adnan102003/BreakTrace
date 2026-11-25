@@ -1,6 +1,6 @@
 # Limitations
 
-- The control plane is single-operator and binds to loopback by default. External projects require proof of control and either an allowlisted public HTTPS staging origin or an exact allowlisted `127.0.0.1` HTTP port. Private network ranges, other local hostnames, cross-origin APIs, authentication flows, write requests and redirects are outside the external test scope.
+- The control plane is single-operator and binds to loopback by default. The private deployment requires an operator password and uses an SSH tunnel. External projects require proof of control and either an allowlisted public HTTPS staging origin or an exact allowlisted `127.0.0.1` HTTP port. Private network ranges, other local hostnames, cross-origin APIs, target login flows, write requests and redirects are outside the external test scope.
 - JSON and MongoDB store independent sets of records. There is one writer per store and one in-process queue. MongoDB mode still stores artifacts on the local filesystem. Multi-user identity, distributed leases, Redis/BullMQ and object storage remain outside the current architecture.
 - Discovery covers routes reached by executed workflows. OpenAPI 3.0, 3.1 and 3.2 import extracts descriptive operations from JSON or YAML. The importer does not follow references, request servers or automatically enroll targets. Shape capture samples the first array item.
 - Evidence is from Chromium in a fixed viewport. Screenshot differences are supplementary and can reflect different navigation outcomes.
@@ -10,4 +10,4 @@
 - Ollama, Gemini and OpenAI need configured models. Live model output and live GitHub repository linking remain unverified. GitHub exports are local drafts and require operator action to use in a repository.
 - A failing baseline or a scenario that fails to reach its mutation can produce an inconclusive run. The CLI assigns unavailable and inconclusive evidence its own exit code.
 - The benchmark is synthetic and curated. Its results cannot establish production accuracy. The risk score is a deterministic policy applied to test evidence.
-- Chromium exercised a real loopback HTTP fixture and a controlled staging HTTPS transport. Live staging testing requires an eligible site, proof hosted by its owner and Chromium sandbox support. Compose schema and workflow lint checks ran locally. Docker runtime and hosted GitHub Actions remain unverified.
+- Chromium exercised a real loopback HTTP fixture and a controlled staging HTTPS transport. Live staging testing requires an eligible site, proof hosted by its owner and Chromium sandbox support. Follow [release status](RELEASE_STATUS.md) for Docker, hosted GitHub Actions and private VM verification.

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
-import { createControlPlane } from './app';
+import { createControlPlane, operatorPasswordSchema } from './app';
 import { connectMongo } from './mongo';
 import { TargetAuthority } from './targets';
 
@@ -11,6 +11,11 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.BREAKTRACE_PORT ?? 4311);
 const data = process.env.BREAKTRACE_DATA || '.data';
+const password = process.env.BREAKTRACE_OPERATOR_PASSWORD || undefined;
+if (process.env.BREAKTRACE_REQUIRE_OPERATOR_AUTH === '1' && !password)
+  throw new Error('Set BREAKTRACE_OPERATOR_PASSWORD for this deployment.');
+if (password && !operatorPasswordSchema.safeParse(password).success)
+  throw new Error('BREAKTRACE_OPERATOR_PASSWORD must be a 32 to 128 character base64url secret.');
 const targets = new TargetAuthority(
   (process.env.BREAKTRACE_ALLOWED_ORIGINS ?? '')
     .split(',')
@@ -35,6 +40,7 @@ const control = createControlPlane(data, {
   model: process.env.BREAKTRACE_OLLAMA_MODEL,
   store,
   targets,
+  operatorPassword: password,
 });
 await control.ready;
 const host = process.env.BREAKTRACE_CONTAINER === '1' ? '0.0.0.0' : '127.0.0.1';

@@ -1,6 +1,30 @@
 # BreakTrace V2
 
-## Starting audit
+## Final audit · 25 November 2026
+
+[FINAL_AUDIT.md](FINAL_AUDIT.md) records the fresh execution evidence, per-feature classifications, benchmark results, and startup commands. This section supersedes the historical statuses below.
+
+| Status | Scope |
+| --- | --- |
+| **VERIFIED** | Custom project lifecycle, API discovery and comparison, OpenAPI JSON/YAML, workflow recording and replay, built-in mutation operators, visual business rules, silent regression detection, bounded isolation, dependency graph, executable generated tests, reviewed static and demo repair, three report formats, JSON/MongoDB restart persistence, loopback and target authorization, deployment scoring and CLI gate, and both themes. |
+| **PARTIALLY VERIFIED** | External target testing on real loopback HTTP and controlled staging transport, AI adapter execution, GitHub integration, responsive design, and exhaustive dashboard interaction coverage. |
+| **NOT IMPLEMENTED** | Operator sign-in, per-user project permissions and distributed execution. |
+| **BLOCKED** | Live HTTPS staging, live model output, authorized GitHub metadata linking, hosted Actions, and Docker runtime. |
+
+- [x] Run lint, type checking, the production build, and all eight Vitest files with the real MongoDB integration enabled.
+- [x] Pass all seven Chromium tests. Visit all 15 routes and capture console and network diagnostics for the exercised dashboard actions.
+- [x] Repeat Fieldwork (30 cases) and Room Board (four cases). Run generated Fieldwork specs and generated baseline and failing specs against the approved local Room Board fixture.
+- [x] Restart isolated production API instances in JSON and MongoDB modes and verify settings, run evidence and an artifact.
+- [x] Fix explicit null versus missing comparison operands and exclude measured and expected rule values from model payloads.
+- [x] Restrict Vite’s development file-serving scope for private workspace evidence.
+- [ ] Execute live DNS, TLS and proof validation on an operator-approved HTTPS staging application.
+- [ ] Exercise Ollama, Gemini and OpenAI with configured services and authorized credentials.
+- [ ] Verify repository metadata with a read-only token, and run the repository workflow on hosted GitHub Actions.
+- [ ] Build and run both Compose configurations on a Docker host and confirm Chromium containment and evidence volumes.
+- [ ] Complete unexercised dashboard control states, populated mobile layouts, and Firefox/WebKit coverage.
+- [ ] Add operator identity and per-project authorization before any shared deployment. Design a durable job queue and controlled evidence storage before adding multiple writers.
+
+## Historical starting audit
 
 The master brief, [architecture](ARCHITECTURE.md), [Phase 2 audit](docs/GENERALIZATION_AUDIT.md), [security model](SECURITY.md), [API contract](docs/API.md), and [benchmark](BENCHMARK_RESULTS.md) establish the current behavior. The control plane already supports staging ownership proofs, scoped workflows and scenarios, OpenAPI imports, JSON and MongoDB storage, and an evidence-based demo. Prior fixes preserve the dashboard Host through Vite and configure the workspace Chromium cache. Restart recovery marks interrupted runs in the saved catalog.
 
@@ -16,7 +40,7 @@ Baseline before V2 changes passed type checking, build, lint, 19 Vitest tests an
 
 The [original requirement matrix](docs/GENERALIZATION_AUDIT.md) covers modules A–I, the fixture, UI, data, security, and engineering. At the V2 baseline, modules A–G already ran in the demo and through a controlled staging transport where applicable. Module H verified one built-in patch and had an unverified Ollama adapter. Module I produced a JSON gate and had static CI and Compose checks. The single-operator API does not provide user accounts or project permissions for separate users. Browser containment, project-scoped OpenAPI import and storage were working before V2 and are preserved.
 
-## Implementation
+## Historical implementation checks
 
 - [x] Complete project lifecycle and local authorization. The build, 20 Vitest tests and both staging browser tests passed. The optional MongoDB test was skipped.
 - [x] Record, edit, validate and replay browser actions. The Room Board recorder test drove real Chromium, captured its request, masked the input, replayed edited steps in a fresh context and saved the workflow.
@@ -34,7 +58,7 @@ The [original requirement matrix](docs/GENERALIZATION_AUDIT.md) covers modules A
 - [ ] Run the workflow on a hosted GitHub Actions runner and verify metadata linking with an authorized repository token.
 - [ ] Verify a live approved HTTPS staging target and model output from an operator-configured provider.
 
-## Dashboard control audit
+## Historical dashboard control audit
 
 The [prior route inventory](docs/GENERALIZATION_AUDIT.md#dashboard-control-audit) records the baseline controls for all 15 screens. V2 retains those links and handlers. The new controls below use the same local workspace authorization guard.
 

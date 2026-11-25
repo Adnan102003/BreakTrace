@@ -56,12 +56,8 @@ export async function evaluate(
     const [left, right] = await Promise.all([resolve(rule.left), resolve(rule.right)]);
     return result(
       numeric(left),
-      right === null || right === undefined ? 'a present comparison value' : describe(right),
-      left !== null &&
-        left !== undefined &&
-        right !== null &&
-        right !== undefined &&
-        Object.is(left, right),
+      right === undefined ? 'a present comparison value' : describe(right),
+      left !== undefined && right !== undefined && Object.is(left, right),
     );
   }
   const amounts = await Promise.all(

@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join, resolve } from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
 import { Server } from 'socket.io';
@@ -47,6 +47,9 @@ const artifacts = [
   'repair-after.png',
 ];
 const loopbackHost = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
+const digest = (value: string) => createHash('sha256').update(value).digest();
+export const operatorPasswordSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/);
+
 function localRequest(req: IncomingMessage) {
   if (!loopbackHost.test(req.headers.host ?? '') || req.headers['sec-fetch-site'] === 'cross-site')
     return false;
@@ -80,6 +83,7 @@ export function createControlPlane(
     store?: Persistence;
     targets?: TargetAuthority;
     staticRepairs?: StaticRepairs;
+    operatorPassword?: string;
   } = {},
 ) {
   const store: Persistence = options.store ?? new Store(root);
@@ -91,11 +95,33 @@ export function createControlPlane(
   const staticRepairs = options.staticRepairs ?? new StaticRepairs();
   const app = express();
   const server = createServer(app);
+  const password = operatorPasswordSchema.optional().parse(options.operatorPassword);
+  const operatorCredential = password
+    ? digest(Buffer.from(`operator:${password}`).toString('base64'))
+    : undefined;
+  const workspaceAccess = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (!localRequest(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ error: 'Local workspace access is required' }));
+    }
+    if (operatorCredential) {
+      const presented = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(req.headers.authorization ?? '')?.[1];
+      res.setHeader('Cache-Control', 'no-store');
+      if (!presented || !timingSafeEqual(digest(presented), operatorCredential)) {
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Basic realm="BreakTrace", charset="UTF-8"',
+        });
+        return res.end(JSON.stringify({ error: 'Operator authentication is required' }));
+      }
+    }
+    next();
+  };
   const socket = new Server(server, {
-    allowRequest: (req, callback) => callback(null, localRequest(req)),
     serveClient: false,
     maxHttpBufferSize: 8192,
   });
+  socket.engine.use(workspaceAccess);
   type RepairJob = 'demo' | ReturnType<StaticRepairs['claim']>;
   const tasks: { run: Run; repair?: RepairJob }[] = [];
   let busy = false;
@@ -228,8 +254,8 @@ export function createControlPlane(
   }
 
   app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    if (!localRequest(req)) return res.status(403).json({ error: 'Local workspace access is required' });
+  app.use(workspaceAccess);
+  app.use((_req, res, next) => {
     res.set({
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
@@ -285,6 +311,7 @@ export function createControlPlane(
     }
     await serialize(async () => {
       const catalog = await store.catalog();
+      const previous = currentProject(catalog, project.id);
       catalog.projects = [...catalog.projects.filter(({ id }) => id !== project.id), project];
       catalog.targetProofs = catalog.targetProofs.filter(
         (proof) =>
@@ -293,8 +320,10 @@ export function createControlPlane(
       );
       if (catalog.projects.length > 30) throw new ClientError(409, 'Project limit reached');
       await store.saveCatalog(catalog);
+      if (previous?.kind === 'external' && (project.kind !== 'external' || previous.url !== project.url))
+        targets.cancelChallenge(project.id);
+      await recorder.closeProject(project.id);
     });
-    await recorder.closeProject(project.id);
     res.json(project);
   });
   app.delete('/api/projects/:id', async (req, res) => {
@@ -321,8 +350,9 @@ export function createControlPlane(
       catalog.projectImports = catalog.projectImports.filter((entry) => entry.projectId !== id);
       catalog.repositories = catalog.repositories.filter((entry) => entry.projectId !== id);
       await store.saveCatalog(catalog);
+      targets.cancelChallenge(id);
+      await recorder.closeProject(id);
     });
-    await recorder.closeProject(id);
     res.json({ deleted: id });
   });
   async function authorizedTarget(project: ExternalProject, catalog: Catalog) {
@@ -361,21 +391,25 @@ export function createControlPlane(
   });
   app.post('/api/projects/:id/challenge', async (req, res) => {
     z.strictObject({ staging: z.literal(true) }).parse(req.body);
-    const project = externalProject(await store.catalog(), slug.parse(req.params.id));
-    res.json(targets.issue(project.id, project.url));
+    const id = slug.parse(req.params.id);
+    const challenge = await serialize(async () => {
+      const project = externalProject(await store.catalog(), id);
+      return targets.issue(project.id, project.url);
+    });
+    res.json(challenge);
   });
   app.post('/api/projects/:id/verify', async (req, res) => {
-    const project = externalProject(await store.catalog(), slug.parse(req.params.id));
-    const proof = await targets.verify(project.id, project.url);
-    await serialize(async () => {
+    const id = slug.parse(req.params.id);
+    const proof = await serialize(async () => {
       const catalog = await store.catalog();
-      if (externalProject(catalog, project.id).url !== project.url)
-        throw new ClientError(409, 'The project origin changed');
+      const project = externalProject(catalog, id);
+      const receipt = await targets.verify(project.id, project.url);
       catalog.targetProofs = [
         ...catalog.targetProofs.filter((entry) => entry.projectId !== project.id),
-        proof,
+        receipt,
       ];
       await store.saveCatalog(catalog);
+      return receipt;
     });
     res.json({ verifiedAt: proof.verifiedAt });
   });
@@ -385,8 +419,9 @@ export function createControlPlane(
       const project = externalProject(catalog, slug.parse(req.params.id));
       catalog.targetProofs = catalog.targetProofs.filter((proof) => proof.projectId !== project.id);
       await store.saveCatalog(catalog);
+      targets.cancelChallenge(project.id);
+      await recorder.closeProject(project.id);
     });
-    await recorder.closeProject(slug.parse(req.params.id));
     res.json({ revoked: true });
   });
   app.post('/api/recordings', async (req, res) => {

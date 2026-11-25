@@ -1,0 +1,24 @@
+[Unit]
+Description=BreakTrace browser regression workspace
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=breaktrace
+Group=breaktrace
+WorkingDirectory=/opt/breaktrace
+EnvironmentFile=/etc/breaktrace/breaktrace.env
+ExecStart=/usr/bin/env BREAKTRACE_CONTAINER=0 BREAKTRACE_REQUIRE_OPERATOR_AUTH=1 BREAKTRACE_DATA=/var/lib/breaktrace node --import tsx apps/api/main.ts
+StateDirectory=breaktrace
+StateDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -163,6 +163,10 @@ export class TargetAuthority {
     return this.allowed.has(origin) || this.localAllowed.has(origin);
   }
 
+  cancelChallenge(projectId: string) {
+    this.challenges.delete(projectId);
+  }
+
   issue(projectId: string, origin: string) {
     if (!this.includes(origin))
       throw new TargetError(

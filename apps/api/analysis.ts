@@ -113,7 +113,7 @@ export function analysisEvidence(run: Run) {
     findings: run.findings?.slice(0, 20).map(({ key, kind, severity }) => ({ key, kind, severity })),
     failingRules: run.variant?.rules
       .filter((rule) => !rule.passed)
-      .map(({ id, actual, expected }) => ({ id, actual, expected })),
+      .map(({ id }) => ({ id })),
     responseChanges: run.variant?.observations.slice(0, 24).map((row) => {
       const original = before.find((item) => item.method === row.method && item.path === row.path);
       return {
